@@ -32,6 +32,7 @@ Pods/
 .idea/
 *.iml
 .vscode/
+.serena/
 
 # Sparkle signing keys (NEVER commit these!)
 .sparkle-keys/
