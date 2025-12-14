@@ -103,6 +103,7 @@ def main():
     # Get process info
     claude_pid = os.getppid()
     tty = get_tty()
+    tmux_pane_id = os.environ.get("TMUX_PANE")
 
     # Build state object
     state = {
@@ -111,6 +112,7 @@ def main():
         "event": event,
         "pid": claude_pid,
         "tty": tty,
+        "tmux_pane_id": tmux_pane_id,
     }
 
     # Map events to status

@@ -130,6 +130,10 @@ actor SessionStore {
             let tree = ProcessTreeBuilder.shared.buildTree()
             session.isInTmux = ProcessTreeBuilder.shared.isInTmux(pid: pid, tree: tree)
         }
+        if let tmuxPaneId = event.tmuxPaneId, !tmuxPaneId.isEmpty {
+            session.tmuxPaneId = tmuxPaneId
+            session.isInTmux = true
+        }
         if let tty = event.tty {
             session.tty = tty.replacingOccurrences(of: "/dev/", with: "")
         }
@@ -176,6 +180,7 @@ actor SessionStore {
             projectName: URL(fileURLWithPath: event.cwd).lastPathComponent,
             pid: event.pid,
             tty: event.tty?.replacingOccurrences(of: "/dev/", with: ""),
+            tmuxPaneId: event.tmuxPaneId,
             isInTmux: false,  // Will be updated
             phase: .idle
         )
@@ -937,9 +942,13 @@ actor SessionStore {
                 await self?.process(.clearDetected(sessionId: sessionId))
             }
 
-            guard !result.newMessages.isEmpty || result.clearDetected else {
+            guard !result.newMessages.isEmpty || result.clearDetected || result.hasNewToolResults else {
                 return
             }
+
+            Self.logger.debug(
+                "File sync delta: session \(sessionId.prefix(8), privacy: .public), newMessages=\(result.newMessages.count), newToolResults=\(result.hasNewToolResults, privacy: .public), completedTools=\(result.completedToolIds.count)"
+            )
 
             let payload = FileUpdatePayload(
                 sessionId: sessionId,

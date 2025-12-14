@@ -48,7 +48,7 @@ struct ToolResultContent: View {
             case .generic(let r):
                 GenericResultContent(result: r)
             }
-        } else if tool.name == "Edit" {
+        } else if tool.name == "Edit" || tool.name == "Update" || tool.name == "MultiEdit" {
             // Special fallback for Edit - show diff from input params
             EditInputDiffView(input: tool.input)
         } else if let result = tool.result {
@@ -66,7 +66,7 @@ struct EditInputDiffView: View {
     let input: [String: String]
 
     private var filename: String {
-        if let path = input["file_path"] {
+        if let path = input["file_path"] ?? input["path"] {
             return URL(fileURLWithPath: path).lastPathComponent
         }
         return "file"
@@ -135,6 +135,8 @@ struct EditResultContent: View {
             // Always use SimpleDiffView for consistent styling (no @@ headers)
             if !oldString.isEmpty || !newString.isEmpty {
                 SimpleDiffView(oldString: oldString, newString: newString, filename: result.filename)
+            } else if let patches = result.structuredPatch, !patches.isEmpty {
+                DiffView(patches: patches)
             }
 
             if result.userModified {

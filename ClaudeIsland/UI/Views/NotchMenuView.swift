@@ -58,7 +58,7 @@ struct NotchMenuView: View {
                         launchAtLogin = true
                     }
                 } catch {
-                    print("Failed to toggle launch at login: \(error)")
+                    // Failed to toggle launch at login
                 }
             }
 

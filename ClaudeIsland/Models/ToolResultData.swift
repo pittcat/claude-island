@@ -268,7 +268,7 @@ struct ToolStatusDisplay {
         switch toolName {
         case "Read":
             return ToolStatusDisplay(text: "Reading...", isRunning: true)
-        case "Edit":
+        case "Edit", "Update", "MultiEdit":
             return ToolStatusDisplay(text: "Editing...", isRunning: true)
         case "Write":
             return ToolStatusDisplay(text: "Writing...", isRunning: true)

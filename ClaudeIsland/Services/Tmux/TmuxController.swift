@@ -17,6 +17,10 @@ actor TmuxController {
         await TmuxTargetFinder.shared.findTarget(forClaudePid: pid)
     }
 
+    func findTmuxTarget(forPaneId paneId: String) async -> TmuxTarget? {
+        await TmuxTargetFinder.shared.findTarget(forPaneId: paneId)
+    }
+
     func findTmuxTarget(forWorkingDirectory dir: String) async -> TmuxTarget? {
         await TmuxTargetFinder.shared.findTarget(forWorkingDirectory: dir)
     }

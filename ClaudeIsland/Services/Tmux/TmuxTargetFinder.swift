@@ -13,6 +13,34 @@ actor TmuxTargetFinder {
 
     private init() {}
 
+    /// Find a tmux target by pane ID (e.g. "%1")
+    func findTarget(forPaneId paneId: String) async -> TmuxTarget? {
+        guard !paneId.isEmpty else { return nil }
+
+        guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {
+            return nil
+        }
+
+        guard let output = await runTmuxCommand(tmuxPath: tmuxPath, args: [
+            "list-panes", "-a", "-F", "#{pane_id} #{session_name}:#{window_index}.#{pane_index}"
+        ]) else {
+            return nil
+        }
+
+        for line in output.components(separatedBy: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+
+            let listedPaneId = String(parts[0])
+            guard listedPaneId == paneId else { continue }
+
+            let targetString = String(parts[1])
+            return TmuxTarget(from: targetString)
+        }
+
+        return nil
+    }
+
     /// Find the tmux target for a given Claude PID
     func findTarget(forClaudePid claudePid: Int) async -> TmuxTarget? {
         guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {

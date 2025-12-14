@@ -20,6 +20,7 @@ struct HookEvent: Codable, Sendable {
     let status: String
     let pid: Int?
     let tty: String?
+    let tmuxPaneId: String?
     let tool: String?
     let toolInput: [String: AnyCodable]?
     let toolUseId: String?
@@ -29,6 +30,7 @@ struct HookEvent: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case cwd, event, status, pid, tty, tool
+        case tmuxPaneId = "tmux_pane_id"
         case toolInput = "tool_input"
         case toolUseId = "tool_use_id"
         case notificationType = "notification_type"
@@ -36,13 +38,14 @@ struct HookEvent: Codable, Sendable {
     }
 
     /// Create a copy with updated toolUseId
-    init(sessionId: String, cwd: String, event: String, status: String, pid: Int?, tty: String?, tool: String?, toolInput: [String: AnyCodable]?, toolUseId: String?, notificationType: String?, message: String?) {
+    init(sessionId: String, cwd: String, event: String, status: String, pid: Int?, tty: String?, tmuxPaneId: String?, tool: String?, toolInput: [String: AnyCodable]?, toolUseId: String?, notificationType: String?, message: String?) {
         self.sessionId = sessionId
         self.cwd = cwd
         self.event = event
         self.status = status
         self.pid = pid
         self.tty = tty
+        self.tmuxPaneId = tmuxPaneId
         self.tool = tool
         self.toolInput = toolInput
         self.toolUseId = toolUseId
@@ -443,6 +446,7 @@ class HookSocketServer {
                 status: event.status,
                 pid: event.pid,
                 tty: event.tty,
+                tmuxPaneId: event.tmuxPaneId,
                 tool: event.tool,
                 toolInput: event.toolInput,
                 toolUseId: toolUseId,  // Use resolved toolUseId

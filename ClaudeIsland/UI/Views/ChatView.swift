@@ -7,12 +7,14 @@
 
 import Combine
 import SwiftUI
+import os.log
 
 struct ChatView: View {
     let sessionId: String
     let initialSession: SessionState
     let sessionMonitor: ClaudeSessionMonitor
     @ObservedObject var viewModel: NotchViewModel
+    private static let logger = Logger(subsystem: "com.claudeisland", category: "ChatView")
 
     @State private var inputText: String = ""
     @State private var history: [ChatHistoryItem] = []
@@ -355,7 +357,7 @@ struct ChatView: View {
 
     /// Can send messages only if session is in tmux
     private var canSendMessages: Bool {
-        session.isInTmux && (session.pid != nil || session.tty != nil)
+        session.isInTmux && (session.tmuxPaneId != nil || session.pid != nil || session.tty != nil)
     }
 
     private var inputBar: some View {
@@ -481,22 +483,46 @@ struct ChatView: View {
     private func sendToSession(_ text: String) async {
         guard session.isInTmux else { return }
 
+        let tmuxPaneId = session.tmuxPaneId
         let pid = session.pid
         let tty = session.tty
+        let cwd = session.cwd
 
-        if let pid {
-            if let target = await TmuxController.shared.findTmuxTarget(forClaudePid: pid) {
+        if let tmuxPaneId, !tmuxPaneId.isEmpty {
+            if let target = await TmuxController.shared.findTmuxTarget(forPaneId: tmuxPaneId) {
+                Self.logger.debug("sendToSession routed by paneId (session: \(self.sessionId.prefix(8), privacy: .public), paneId: \(tmuxPaneId, privacy: .public))")
                 _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
                 return
             }
+            Self.logger.warning("sendToSession paneId not found (session: \(self.sessionId.prefix(8), privacy: .public), paneId: \(tmuxPaneId, privacy: .public))")
         }
 
         if let tty {
             if let target = await findTmuxTarget(tty: tty) {
+                Self.logger.debug("sendToSession routed by tty (session: \(self.sessionId.prefix(8), privacy: .public), tty: \(tty, privacy: .public))")
                 _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
                 return
             }
         }
+
+        if let pid {
+            if let target = await TmuxController.shared.findTmuxTarget(forClaudePid: pid) {
+                Self.logger.debug("sendToSession routed by pid (session: \(self.sessionId.prefix(8), privacy: .public), pid: \(pid, privacy: .public))")
+                _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
+                return
+            }
+        }
+
+        if let target = await TmuxController.shared.findTmuxTarget(forWorkingDirectory: cwd) {
+            Self.logger.debug("sendToSession routed by cwd (session: \(self.sessionId.prefix(8), privacy: .public), cwd: \(cwd, privacy: .public))")
+            _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
+            return
+        }
+
+        let pidText = pid.map(String.init) ?? "nil"
+        let ttyText = tty ?? "nil"
+        let paneIdText = tmuxPaneId ?? "nil"
+        Self.logger.warning("sendToSession failed to route (session: \(self.sessionId.prefix(8), privacy: .public), paneId: \(paneIdText, privacy: .public), pid: \(pidText, privacy: .public), tty: \(ttyText, privacy: .public), cwd: \(cwd, privacy: .public))")
     }
 
     private func findTmuxTarget(tty: String) async -> TmuxTarget? {
@@ -670,13 +696,17 @@ struct ToolCallView: View {
         tool.result != nil || tool.structuredResult != nil
     }
 
-    /// Whether the tool can be expanded (has result, NOT Task tools, NOT Edit tools)
+    private var isEditLike: Bool {
+        tool.name == "Edit" || tool.name == "Update" || tool.name == "MultiEdit"
+    }
+
+    /// Whether the tool can be expanded (has result, NOT Task tools, NOT Edit-like tools)
     private var canExpand: Bool {
-        tool.name != "Task" && tool.name != "Edit" && hasResult
+        tool.name != "Task" && !isEditLike && hasResult
     }
 
     private var showContent: Bool {
-        tool.name == "Edit" || isExpanded
+        isEditLike || isExpanded
     }
 
     private var agentDescription: String? {
@@ -756,7 +786,7 @@ struct ToolCallView: View {
 
             // Result content (Edit always shows, others when expanded)
             // Edit tools bypass hasResult check - fallback in ToolResultContent renders from input params
-            if showContent && tool.status != .running && tool.name != "Task" && (hasResult || tool.name == "Edit") {
+            if showContent && tool.status != .running && tool.name != "Task" && (hasResult || isEditLike) {
                 ToolResultContent(tool: tool)
                     .padding(.leading, 12)
                     .padding(.top, 4)
@@ -764,7 +794,7 @@ struct ToolCallView: View {
             }
 
             // Edit tools show diff from input even while running
-            if tool.name == "Edit" && tool.status == .running {
+            if isEditLike && tool.status == .running {
                 EditInputDiffView(input: tool.input)
                     .padding(.leading, 12)
                     .padding(.top, 4)

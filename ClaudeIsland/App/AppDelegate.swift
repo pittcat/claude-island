@@ -31,7 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try updater.start()
         } catch {
-            print("Failed to start Sparkle updater: \(error)")
+            // Failed to start Sparkle updater
         }
     }
 

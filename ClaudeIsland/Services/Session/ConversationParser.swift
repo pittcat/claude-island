@@ -72,8 +72,7 @@ actor ConversationParser {
     /// Parse a JSONL file to extract conversation info
     /// Uses caching based on file modification time
     func parse(sessionId: String, cwd: String) -> ConversationInfo {
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let sessionFile = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/" + sessionId + ".jsonl"
+        let sessionFile = ClaudeProjectPath.sessionFilePath(sessionId: sessionId, cwd: cwd)
 
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: sessionFile),
@@ -283,6 +282,7 @@ actor ConversationParser {
         let completedToolIds: Set<String>
         let toolResults: [String: ToolResult]
         let structuredResults: [String: ToolResultData]
+        let hasNewToolResults: Bool
         let clearDetected: Bool
     }
 
@@ -297,12 +297,14 @@ actor ConversationParser {
                 completedToolIds: [],
                 toolResults: [:],
                 structuredResults: [:],
+                hasNewToolResults: false,
                 clearDetected: false
             )
         }
 
         var state = incrementalState[sessionId] ?? IncrementalParseState()
-        let newMessages = parseNewLines(filePath: sessionFile, state: &state)
+        let parseResult = parseNewLines(filePath: sessionFile, state: &state)
+        let newMessages = parseResult.newMessages
         let clearDetected = state.clearPending
         if clearDetected {
             state.clearPending = false
@@ -315,14 +317,18 @@ actor ConversationParser {
             completedToolIds: state.completedToolIds,
             toolResults: state.toolResults,
             structuredResults: state.structuredResults,
+            hasNewToolResults: parseResult.hasNewToolResults,
             clearDetected: clearDetected
         )
     }
 
     /// Parse only new lines since last read (incremental)
-    private func parseNewLines(filePath: String, state: inout IncrementalParseState) -> [ChatMessage] {
+    private func parseNewLines(
+        filePath: String,
+        state: inout IncrementalParseState
+    ) -> (newMessages: [ChatMessage], hasNewToolResults: Bool) {
         guard let fileHandle = FileHandle(forReadingAtPath: filePath) else {
-            return []
+            return ([], false)
         }
         defer { try? fileHandle.close() }
 
@@ -330,7 +336,7 @@ actor ConversationParser {
         do {
             fileSize = try fileHandle.seekToEnd()
         } catch {
-            return []
+            return ([], false)
         }
 
         if fileSize < state.lastFileOffset {
@@ -338,24 +344,25 @@ actor ConversationParser {
         }
 
         if fileSize == state.lastFileOffset {
-            return state.messages
+            return ([], false)
         }
 
         do {
             try fileHandle.seek(toOffset: state.lastFileOffset)
         } catch {
-            return state.messages
+            return ([], false)
         }
 
         guard let newData = try? fileHandle.readToEnd(),
               let newContent = String(data: newData, encoding: .utf8) else {
-            return state.messages
+            return ([], false)
         }
 
         state.clearPending = false
         let isIncrementalRead = state.lastFileOffset > 0
         let lines = newContent.components(separatedBy: "\n")
         var newMessages: [ChatMessage] = []
+        var hasNewToolResults = false
 
         for line in lines where !line.isEmpty {
             if line.contains("<command-name>/clear</command-name>") {
@@ -387,6 +394,7 @@ actor ConversationParser {
                     for block in contentArray {
                         if block["type"] as? String == "tool_result",
                            let toolUseId = block["tool_use_id"] as? String {
+                            hasNewToolResults = true
                             state.completedToolIds.insert(toolUseId)
 
                             let content = block["content"] as? String
@@ -423,7 +431,7 @@ actor ConversationParser {
         }
 
         state.lastFileOffset = fileSize
-        return newMessages
+        return (newMessages, hasNewToolResults)
     }
 
     /// Get set of completed tool IDs for a session
@@ -459,8 +467,7 @@ actor ConversationParser {
 
     /// Build session file path
     private static func sessionFilePath(sessionId: String, cwd: String) -> String {
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        return NSHomeDirectory() + "/.claude/projects/" + projectDir + "/" + sessionId + ".jsonl"
+        ClaudeProjectPath.sessionFilePath(sessionId: sessionId, cwd: cwd)
     }
 
     private func parseMessageLine(_ json: [String: Any], seenToolIds: inout Set<String>, toolIdToName: inout [String: String]) -> ChatMessage? {
@@ -593,7 +600,7 @@ actor ConversationParser {
         switch toolName {
         case "Read":
             return parseReadResult(toolUseResult)
-        case "Edit":
+        case "Edit", "Update", "MultiEdit":
             return parseEditResult(toolUseResult)
         case "Write":
             return parseWriteResult(toolUseResult)
@@ -887,8 +894,7 @@ actor ConversationParser {
     func parseSubagentTools(agentId: String, cwd: String) -> [SubagentToolInfo] {
         guard !agentId.isEmpty else { return [] }
 
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let agentFile = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/agent-" + agentId + ".jsonl"
+        let agentFile = ClaudeProjectPath.agentFilePath(agentId: agentId, cwd: cwd)
 
         guard FileManager.default.fileExists(atPath: agentFile),
               let content = try? String(contentsOfFile: agentFile, encoding: .utf8) else {
@@ -979,8 +985,7 @@ extension ConversationParser {
     nonisolated static func parseSubagentToolsSync(agentId: String, cwd: String) -> [SubagentToolInfo] {
         guard !agentId.isEmpty else { return [] }
 
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let agentFile = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/agent-" + agentId + ".jsonl"
+        let agentFile = ClaudeProjectPath.agentFilePath(agentId: agentId, cwd: cwd)
 
         guard FileManager.default.fileExists(atPath: agentFile),
               let content = try? String(contentsOfFile: agentFile, encoding: .utf8) else {
@@ -1054,4 +1059,3 @@ extension ConversationParser {
         return tools
     }
 }
-
