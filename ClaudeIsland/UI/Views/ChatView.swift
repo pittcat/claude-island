@@ -355,7 +355,7 @@ struct ChatView: View {
 
     /// Can send messages only if session is in tmux
     private var canSendMessages: Bool {
-        session.isInTmux && session.tty != nil
+        session.isInTmux && (session.pid != nil || session.tty != nil)
     }
 
     private var inputBar: some View {
@@ -480,10 +480,22 @@ struct ChatView: View {
 
     private func sendToSession(_ text: String) async {
         guard session.isInTmux else { return }
-        guard let tty = session.tty else { return }
 
-        if let target = await findTmuxTarget(tty: tty) {
-            _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
+        let pid = session.pid
+        let tty = session.tty
+
+        if let pid {
+            if let target = await TmuxController.shared.findTmuxTarget(forClaudePid: pid) {
+                _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
+                return
+            }
+        }
+
+        if let tty {
+            if let target = await findTmuxTarget(tty: tty) {
+                _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
+                return
+            }
         }
     }
 

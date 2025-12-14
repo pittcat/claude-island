@@ -29,23 +29,40 @@ def get_tty():
             timeout=2
         )
         tty = result.stdout.strip()
+
         if tty and tty != "??" and tty != "-":
             # ps returns just "ttys001", we need "/dev/ttys001"
             if not tty.startswith("/dev/"):
                 tty = "/dev/" + tty
             return tty
-    except Exception:
-        pass
+    except Exception as e:
+        _ = e
 
     # Fallback: try current process stdin/stdout
     try:
         return os.ttyname(sys.stdin.fileno())
     except (OSError, AttributeError):
         pass
+
     try:
         return os.ttyname(sys.stdout.fileno())
     except (OSError, AttributeError):
         pass
+
+    # Try using the tty command as last resort
+    try:
+        result = subprocess.run(
+            ["tty"],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        tty = result.stdout.strip()
+        if tty and tty != "not a tty":
+            return tty
+    except Exception as e:
+        _ = e
+
     return None
 
 
@@ -55,6 +72,7 @@ def send_event(state):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(TIMEOUT_SECONDS)
         sock.connect(SOCKET_PATH)
+
         sock.sendall(json.dumps(state).encode())
 
         # For permission requests, wait for response
