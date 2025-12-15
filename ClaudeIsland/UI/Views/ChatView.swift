@@ -389,10 +389,14 @@ struct ChatView: View {
             } label: {
                 Image(systemName: screenshotManager.isCapturing ? "camera.fill" : "camera")
                     .font(.system(size: 16))
-                    .foregroundColor(screenshotManager.isCapturing ? TerminalColors.blue : .white.opacity(0.7))
+                    .foregroundColor(
+                        !canSendMessages ? .white.opacity(0.3) :
+                        screenshotManager.isCapturing ? TerminalColors.blue :
+                        .white.opacity(0.7)
+                    )
             }
             .buttonStyle(.plain)
-            .disabled(screenshotManager.isCapturing)
+            .disabled(!canSendMessages || screenshotManager.isCapturing)
             .help("Take screenshot and copy path")
 
             Button {
@@ -400,7 +404,11 @@ struct ChatView: View {
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 28))
-                    .foregroundColor(!canSendMessages || inputText.isEmpty ? .white.opacity(0.2) : .white.opacity(0.9))
+                    .foregroundColor(
+                        !canSendMessages ? .white.opacity(0.3) :
+                        inputText.isEmpty ? .white.opacity(0.7) :
+                        .white.opacity(0.9)
+                    )
             }
             .buttonStyle(.plain)
             .disabled(!canSendMessages || inputText.isEmpty)
