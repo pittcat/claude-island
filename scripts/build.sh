@@ -87,22 +87,42 @@ echo "=== Signing App for Local Use ==="
 
 APP_PATH="$EXPORT_PATH/Claude Island.app"
 
+# Find Apple Development certificate
+SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+if [ -z "$SIGNING_IDENTITY" ]; then
+    echo "Warning: No Apple Development certificate found, falling back to ad-hoc signing"
+    SIGNING_IDENTITY="-"
+else
+    echo "Using certificate: $SIGNING_IDENTITY"
+fi
+
 # Kill any running instances
 echo "Stopping any running instances..."
 pkill -f "Claude Island" || true
 sleep 1
 
-# Sign the main app
-echo "Signing main app..."
-codesign --force --deep --sign - "$APP_PATH" 2>/dev/null || echo "Warning: Main app signing had issues"
-
-# Sign all frameworks
+# Sign all nested components first (inside-out signing)
 echo "Signing frameworks..."
-find "$APP_PATH/Contents/Frameworks" -name "*.framework" -exec codesign --force --sign - {} \; 2>/dev/null || true
+find "$APP_PATH/Contents/Frameworks" -name "*.framework" -exec codesign --force --sign "$SIGNING_IDENTITY" {} \; 2>/dev/null || true
+
+# Sign XPC services if any
+find "$APP_PATH/Contents/Frameworks" -name "*.xpc" -exec codesign --force --sign "$SIGNING_IDENTITY" {} \; 2>/dev/null || true
+
+# Sign helper apps if any
+find "$APP_PATH/Contents/Frameworks" -name "*.app" -exec codesign --force --sign "$SIGNING_IDENTITY" {} \; 2>/dev/null || true
 
 # Sign all binaries in MacOS
 echo "Signing binaries..."
-find "$APP_PATH/Contents/MacOS" -type f -exec codesign --force --sign - {} \; 2>/dev/null || true
+find "$APP_PATH/Contents/MacOS" -type f -exec codesign --force --sign "$SIGNING_IDENTITY" {} \; 2>/dev/null || true
+
+# Sign the main app last
+echo "Signing main app..."
+codesign --force --sign "$SIGNING_IDENTITY" "$APP_PATH" 2>/dev/null || echo "Warning: Main app signing had issues"
+
+# Verify signature
+echo "Verifying signature..."
+codesign -dvv "$APP_PATH" 2>&1 | grep -E "(Identifier|TeamIdentifier|Signature)" || true
 
 echo "Signing complete!"
 
@@ -111,6 +131,10 @@ echo "Signing complete!"
 # ============================================
 echo ""
 echo "=== Installing App ==="
+
+# Reset TCC permissions for fresh start with new signature
+echo "Resetting screen capture permissions..."
+tccutil reset ScreenCapture com.celestial.ClaudeIsland 2>/dev/null || true
 
 # Check if app exists in Applications
 if [ -d "/Applications/Claude Island.app" ]; then
