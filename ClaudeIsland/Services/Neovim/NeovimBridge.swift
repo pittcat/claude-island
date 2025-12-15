@@ -116,18 +116,26 @@ actor NeovimBridge {
         mode: String = "append_and_enter",
         ensureTerminal: Bool = true
     ) async throws -> Int {
+        let traceId = String(UUID().uuidString.prefix(8))
+        let textPreview = text.prefix(50)
+
+        Self.logger.info("[\(traceId, privacy: .public)] sendText START - text: '\(textPreview, privacy: .public)...', mode: \(mode, privacy: .public)")
+        Self.logger.info("[\(traceId, privacy: .public)] Session: id=\(sessionState.sessionId.prefix(8), privacy: .public), cwd=\(sessionState.cwd, privacy: .public)")
+        Self.logger.info("[\(traceId, privacy: .public)] Session state: isInNeovim=\(sessionState.isInNeovim), nvimPid=\(sessionState.nvimPid.map(String.init) ?? "nil", privacy: .public), canSendViaNeovim=\(sessionState.canSendViaNeovim)")
+
         guard !text.isEmpty else {
+            Self.logger.error("[\(traceId, privacy: .public)] FAILED: Empty text")
             throw NeovimBridgeError.emptyText
         }
-
-        let traceId = String(UUID().uuidString.prefix(8))
 
         // Find Neovim instance
         let instance: NeovimInstance
         do {
+            Self.logger.info("[\(traceId, privacy: .public)] Finding Neovim instance...")
             instance = try await findNeovimInstance(for: sessionState)
+            Self.logger.info("[\(traceId, privacy: .public)] Found instance: pid=\(instance.pid), socket=\(instance.listenAddress, privacy: .public)")
         } catch {
-            Self.logger.error("Failed to find nvim instance: \(error.localizedDescription, privacy: .public)")
+            Self.logger.error("[\(traceId, privacy: .public)] FAILED to find nvim instance: \(error.localizedDescription, privacy: .public)")
             throw error
         }
 
@@ -146,15 +154,23 @@ actor NeovimBridge {
             ]
         ]
 
-        let response = try await callRPC(instance: instance, payload: payload, traceId: traceId)
+        Self.logger.info("[\(traceId, privacy: .public)] Calling RPC...")
+        let response: NeovimRPCResponse
+        do {
+            response = try await callRPC(instance: instance, payload: payload, traceId: traceId)
+        } catch {
+            Self.logger.error("[\(traceId, privacy: .public)] RPC call FAILED: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
 
         guard response.ok else {
             let errorMsg = response.error ?? "Unknown error"
-            Self.logger.error("RPC response error: \(errorMsg, privacy: .public)")
+            Self.logger.error("[\(traceId, privacy: .public)] RPC response error: \(errorMsg, privacy: .public)")
             throw NeovimBridgeError.rpcFailed(errorMsg)
         }
 
         let injectedBytes = response.data?.injected_bytes ?? 0
+        Self.logger.info("[\(traceId, privacy: .public)] sendText SUCCESS - injected \(injectedBytes) bytes")
         return injectedBytes
     }
 
@@ -229,6 +245,7 @@ actor NeovimBridge {
             return instance
         }
 
+        Self.logger.error("No Neovim instance found for session")
         throw NeovimBridgeError.noNeovimInstance
     }
 
@@ -288,22 +305,19 @@ actor NeovimBridge {
 
     /// Find Neovim instance by CWD
     private func findByCwd(for sessionState: SessionState) async -> NeovimInstance? {
-        // List all running Neovim processes and check their CWD
-        // This is a fallback when registry is not available
-
         let result = ProcessExecutor.shared.runSyncOrNil(
             "/usr/bin/pgrep",
             arguments: ["-x", "nvim"]
         )
 
-        guard let output = result else { return nil }
+        guard let output = result else {
+            return nil
+        }
 
         let pids = output.split(separator: "\n").compactMap { Int($0) }
 
         for pid in pids {
-            // Check process CWD
             if let cwd = getProcessCwd(pid: pid), cwd == sessionState.cwd {
-                // Get listen address
                 if let listenAddr = await getNeovimListenAddress(pid: pid) {
                     return NeovimInstance(
                         pid: pid,
@@ -361,11 +375,18 @@ actor NeovimBridge {
 
     /// Call Neovim RPC via nvim --server --remote-expr
     private func callRPC(instance: NeovimInstance, payload: [String: Any], traceId: String) async throws -> NeovimRPCResponse {
-        let nvimPath = try await findNvimPath()
+        let nvimPath: String
+        do {
+            nvimPath = try await findNvimPath()
+        } catch {
+            Self.logger.error("[\(traceId, privacy: .public)] callRPC: nvim not found - \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
 
         // Serialize payload to JSON
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
+            Self.logger.error("[\(traceId, privacy: .public)] callRPC: JSON encoding failed")
             throw NeovimBridgeError.jsonEncodingFailed
         }
 
@@ -381,14 +402,22 @@ actor NeovimBridge {
             arguments: [
                 "--server", instance.listenAddress,
                 "--remote-expr", vimExpr
+            ],
+            environment: [
+                "TERM": "dumb",  // Prevent terminal control sequences
+                "NO_COLOR": "1"
             ]
         )
 
         switch result {
         case .success(let processResult):
-            let output = processResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawOutput = processResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Extract JSON from output (filter out terminal control sequences)
+            let output = Self.extractJSON(from: rawOutput)
 
             guard let data = output.data(using: .utf8) else {
+                Self.logger.error("[\(traceId, privacy: .public)] callRPC: Output is not valid UTF-8")
                 throw NeovimBridgeError.invalidResponse("Not valid UTF-8")
             }
 
@@ -396,10 +425,12 @@ actor NeovimBridge {
                 let response = try JSONDecoder().decode(NeovimRPCResponse.self, from: data)
                 return response
             } catch {
+                Self.logger.error("[\(traceId, privacy: .public)] RPC JSON decode failed - \(error.localizedDescription, privacy: .public)")
                 throw NeovimBridgeError.invalidResponse(error.localizedDescription)
             }
 
         case .failure(let error):
+            Self.logger.error("[\(traceId, privacy: .public)] RPC process execution failed - \(error.localizedDescription, privacy: .public)")
             throw NeovimBridgeError.rpcFailed(error.localizedDescription)
         }
     }
@@ -418,19 +449,55 @@ actor NeovimBridge {
 
     // MARK: - Helper Functions
 
+    /// Extract JSON from output that may contain terminal control sequences
+    /// Looks for the first `{` and last `}` to extract the JSON portion
+    private nonisolated static func extractJSON(from output: String) -> String {
+        // Try to find JSON boundaries
+        guard let jsonStart = output.firstIndex(of: "{"),
+              let jsonEnd = output.lastIndex(of: "}") else {
+            // No JSON found, return original (might be error message)
+            return output
+        }
+
+        // Extract JSON portion
+        let startIndex = jsonStart
+        let endIndex = output.index(after: jsonEnd)
+
+        guard startIndex < endIndex else {
+            return output
+        }
+
+        let extracted = String(output[startIndex..<endIndex])
+
+        // Validate it's actual JSON by trying to parse it
+        if let data = extracted.data(using: .utf8),
+           (try? JSONSerialization.jsonObject(with: data)) != nil {
+            return extracted
+        }
+
+        // If extraction failed, return original
+        return output
+    }
+
     /// Find nvim executable path
     private func findNvimPath() async throws -> String {
         if let cached = nvimPath {
             return cached
         }
 
-        // Common paths
+        let home = Foundation.ProcessInfo.processInfo.environment["HOME"] ?? "/Users/pittcat"
+
+        // Common paths (including bob, asdf, mise, etc.)
         let paths = [
             "/opt/homebrew/bin/nvim",
             "/usr/local/bin/nvim",
             "/usr/bin/nvim",
-            Foundation.ProcessInfo.processInfo.environment["HOME"].map { "\($0)/.local/bin/nvim" }
-        ].compactMap { $0 }
+            "\(home)/.local/bin/nvim",
+            "\(home)/.local/share/bob/nvim-bin/nvim",     // bob (Neovim version manager)
+            "\(home)/.asdf/shims/nvim",                    // asdf
+            "\(home)/.local/share/mise/shims/nvim",        // mise
+            "\(home)/.nix-profile/bin/nvim",               // nix
+        ]
 
         for path in paths {
             if FileManager.default.isExecutableFile(atPath: path) {
@@ -439,7 +506,7 @@ actor NeovimBridge {
             }
         }
 
-        // Try which
+        // Try which as fallback
         if let result = ProcessExecutor.shared.runSyncOrNil("/usr/bin/which", arguments: ["nvim"]) {
             let path = result.trimmingCharacters(in: .whitespacesAndNewlines)
             if FileManager.default.isExecutableFile(atPath: path) {
@@ -448,6 +515,7 @@ actor NeovimBridge {
             }
         }
 
+        Self.logger.error("findNvimPath: nvim not found in any known location")
         throw NeovimBridgeError.nvimNotFound
     }
 

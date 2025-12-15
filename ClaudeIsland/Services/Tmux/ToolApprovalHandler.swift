@@ -66,6 +66,10 @@ actor ToolApprovalHandler {
 
             // Send Enter as a separate command if needed
             if pressEnter {
+                // Small delay to ensure text is fully processed before Enter
+                // This prevents race conditions where Enter arrives before text is ready
+                try? await Task.sleep(for: .milliseconds(50))
+
                 Self.logger.debug("Sending Enter key")
                 let enterArgs = ["send-keys", "-t", targetStr, "Enter"]
                 _ = try await ProcessExecutor.shared.run(tmuxPath, arguments: enterArgs)

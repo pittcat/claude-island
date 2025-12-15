@@ -18,6 +18,7 @@ struct NotchMenuView: View {
     @ObservedObject private var updateManager = UpdateManager.shared
     @ObservedObject private var screenSelector = ScreenSelector.shared
     @ObservedObject private var soundSelector = SoundSelector.shared
+    @ObservedObject private var screenshotManager = ScreenshotManager.shared
     @State private var hooksInstalled: Bool = false
     @State private var launchAtLogin: Bool = false
 
@@ -82,6 +83,13 @@ struct NotchMenuView: View {
                 .background(Color.white.opacity(0.08))
                 .padding(.vertical, 4)
 
+            // Screenshot functionality
+            ScreenshotRow(screenshotManager: screenshotManager)
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+                .padding(.vertical, 4)
+
             // About
             UpdateRow(updateManager: updateManager)
 
@@ -123,6 +131,64 @@ struct NotchMenuView: View {
         hooksInstalled = HookInstaller.isInstalled()
         launchAtLogin = SMAppService.mainApp.status == .enabled
         screenSelector.refreshScreens()
+    }
+}
+
+// MARK: - Screenshot Row
+
+struct ScreenshotRow: View {
+    @ObservedObject var screenshotManager: ScreenshotManager
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: handleScreenshot) {
+            HStack(spacing: 10) {
+                Image(systemName: "camera")
+                    .font(.system(size: 12))
+                    .foregroundColor(textColor)
+                    .frame(width: 16)
+
+                Text("Take Screenshot (Copy Path)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(textColor)
+
+                Spacer()
+
+                if screenshotManager.isCapturing {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 12, height: 12)
+                        .tint(TerminalColors.blue)
+                } else if let _ = screenshotManager.lastScreenshotPath {
+                    Text("✓")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(TerminalColors.green)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovered && !screenshotManager.isCapturing ? Color.white.opacity(0.08) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(screenshotManager.isCapturing)
+        .onHover { isHovered = $0 }
+    }
+
+    private var textColor: Color {
+        if screenshotManager.isCapturing {
+            return .white.opacity(0.5)
+        }
+        return .white.opacity(isHovered ? 1.0 : 0.7)
+    }
+
+    private func handleScreenshot() {
+        Task {
+            await screenshotManager.captureScreenshot()
+        }
     }
 }
 

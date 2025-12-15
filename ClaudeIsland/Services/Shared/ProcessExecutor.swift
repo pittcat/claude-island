@@ -42,7 +42,7 @@ struct ProcessResult: Sendable {
 /// Protocol for executing shell commands (enables testing)
 protocol ProcessExecuting: Sendable {
     func run(_ executable: String, arguments: [String]) async throws -> String
-    func runWithResult(_ executable: String, arguments: [String]) async -> Result<ProcessResult, ProcessExecutorError>
+    func runWithResult(_ executable: String, arguments: [String], environment: [String: String]?) async -> Result<ProcessResult, ProcessExecutorError>
     func runSync(_ executable: String, arguments: [String]) -> Result<String, ProcessExecutorError>
 }
 
@@ -68,7 +68,7 @@ actor ProcessExecutor: ProcessExecuting {
     }
 
     /// Run a command asynchronously and return a full Result with exit code and stderr
-    func runWithResult(_ executable: String, arguments: [String]) async -> Result<ProcessResult, ProcessExecutorError> {
+    func runWithResult(_ executable: String, arguments: [String], environment: [String: String]? = nil) async -> Result<ProcessResult, ProcessExecutorError> {
         await withCheckedContinuation { continuation in
             let process = Process()
             let stdoutPipe = Pipe()
@@ -78,6 +78,15 @@ actor ProcessExecutor: ProcessExecuting {
             process.arguments = arguments
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
+
+            // Set custom environment if provided (merged with current environment)
+            if let environment = environment {
+                var env = Foundation.ProcessInfo.processInfo.environment
+                for (key, value) in environment {
+                    env[key] = value
+                }
+                process.environment = env
+            }
 
             do {
                 try process.run()

@@ -17,6 +17,10 @@
     <key>NSHumanReadableCopyright</key>
     <string>Copyright 2025. All rights reserved.</string>
 
+    <!-- Screen Recording Permission -->
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Claude Island needs screen recording permission to capture screenshots for sharing with Claude.</string>
+
     <!-- Sparkle Update Configuration -->
     <key>SUFeedURL</key>
     <string>https://claudeisland.com/appcast.xml</string>

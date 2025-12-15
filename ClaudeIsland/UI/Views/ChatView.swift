@@ -14,6 +14,7 @@ struct ChatView: View {
     let initialSession: SessionState
     let sessionMonitor: ClaudeSessionMonitor
     @ObservedObject var viewModel: NotchViewModel
+    @ObservedObject private var screenshotManager = ScreenshotManager.shared
     private static let logger = Logger(subsystem: "com.claudeisland", category: "ChatView")
 
     @State private var inputText: String = ""
@@ -382,6 +383,18 @@ struct ChatView: View {
                     sendMessage()
                 }
 
+            // Screenshot button
+            Button {
+                takeScreenshot()
+            } label: {
+                Image(systemName: screenshotManager.isCapturing ? "camera.fill" : "camera")
+                    .font(.system(size: 16))
+                    .foregroundColor(screenshotManager.isCapturing ? TerminalColors.blue : .white.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            .disabled(screenshotManager.isCapturing)
+            .help("Take screenshot and copy path")
+
             Button {
                 sendMessage()
             } label: {
@@ -406,6 +419,20 @@ struct ChatView: View {
             .allowsHitTesting(false)
         }
         .zIndex(1) // Render above message list
+    }
+
+    // MARK: - Screenshot
+
+    private func takeScreenshot() {
+        // Minimize window first to allow screenshot
+        viewModel.notchClose()
+
+        // Small delay to let window close animation complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            Task {
+                await screenshotManager.captureScreenshot()
+            }
+        }
     }
 
     // MARK: - Approval Bar
@@ -481,14 +508,25 @@ struct ChatView: View {
     }
 
     private func sendToSession(_ text: String) async {
+        let traceId = String(UUID().uuidString.prefix(8))
+        let textPreview = String(text.prefix(30))
+
+        Self.logger.info("[\(traceId, privacy: .public)] sendToSession START - text: '\(textPreview, privacy: .public)...'")
+        Self.logger.info("[\(traceId, privacy: .public)] Session: canSendViaNeovim=\(session.canSendViaNeovim), isInTmux=\(session.isInTmux), isInNeovim=\(session.isInNeovim)")
+
         // Priority 1: Neovim RPC (if available)
         if session.canSendViaNeovim {
+            Self.logger.info("[\(traceId, privacy: .public)] Trying Neovim RPC...")
             do {
-                let _ = try await NeovimBridge.shared.sendText(text, for: session)
+                let bytes = try await NeovimBridge.shared.sendText(text, for: session)
+                Self.logger.info("[\(traceId, privacy: .public)] Neovim RPC SUCCESS - sent \(bytes) bytes")
                 return
             } catch {
-                // Fall through to tmux
+                Self.logger.error("[\(traceId, privacy: .public)] Neovim RPC FAILED: \(error.localizedDescription, privacy: .public)")
+                Self.logger.warning("[\(traceId, privacy: .public)] FALLING BACK TO TMUX!")
             }
+        } else {
+            Self.logger.info("[\(traceId, privacy: .public)] Neovim RPC not available, using tmux")
         }
 
         // Priority 2: tmux
