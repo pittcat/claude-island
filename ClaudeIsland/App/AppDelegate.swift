@@ -8,6 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowManager: WindowManager?
     private var screenObserver: ScreenObserver?
     private var updateCheckTimer: Timer?
+    private var ideRPCServer: Task<Void, Never>?
 
     static var shared: AppDelegate?
     let updater: SPUUpdater
@@ -85,6 +86,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let updater = self?.updater, updater.canCheckForUpdates else { return }
             updater.checkForUpdates()
         }
+
+        // Start IDE RPC server for Neovim/IDE integrations
+        ideRPCServer = Task {
+            do {
+                try await IDERPCServer.shared.start()
+            } catch {
+                print("Failed to start IDE RPC server: \(error)")
+            }
+        }
     }
 
     private func handleScreenChange() {
@@ -95,6 +105,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Mixpanel.mainInstance().flush()
         updateCheckTimer?.invalidate()
         screenObserver = nil
+
+        // Stop IDE RPC server
+        ideRPCServer?.cancel()
+        Task {
+            await IDERPCServer.shared.stop()
+        }
     }
 
     private func getOrCreateDistinctId() -> String {

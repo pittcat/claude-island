@@ -24,6 +24,15 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var tmuxPaneId: String?
     var isInTmux: Bool
 
+    // MARK: - Neovim Metadata
+
+    /// Whether the session is running inside Neovim terminal
+    var isInNeovim: Bool
+    /// The Neovim server listen address (for RPC)
+    var nvimListenAddress: String?
+    /// The Neovim PID (if known)
+    var nvimPid: Int?
+
     // MARK: - State Machine
 
     /// Current phase in the session lifecycle
@@ -73,6 +82,9 @@ struct SessionState: Equatable, Identifiable, Sendable {
         tty: String? = nil,
         tmuxPaneId: String? = nil,
         isInTmux: Bool = false,
+        isInNeovim: Bool = false,
+        nvimListenAddress: String? = nil,
+        nvimPid: Int? = nil,
         phase: SessionPhase = .idle,
         chatItems: [ChatHistoryItem] = [],
         toolTracker: ToolTracker = ToolTracker(),
@@ -92,6 +104,9 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.tty = tty
         self.tmuxPaneId = tmuxPaneId
         self.isInTmux = isInTmux
+        self.isInNeovim = isInNeovim
+        self.nvimListenAddress = nvimListenAddress
+        self.nvimPid = nvimPid
         self.phase = phase
         self.chatItems = chatItems
         self.toolTracker = toolTracker
@@ -185,6 +200,16 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// Whether the session can be interacted with
     var canInteract: Bool {
         phase.needsAttention
+    }
+
+    /// Whether messages can be sent via Neovim RPC
+    var canSendViaNeovim: Bool {
+        isInNeovim && (nvimListenAddress != nil || nvimPid != nil)
+    }
+
+    /// Whether messages can be sent via any channel (tmux or neovim)
+    var canSendMessages: Bool {
+        canSendViaNeovim || (isInTmux && (tmuxPaneId != nil || pid != nil || tty != nil))
     }
 }
 

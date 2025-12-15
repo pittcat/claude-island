@@ -13,10 +13,12 @@ class EventMonitors {
 
     let mouseLocation = CurrentValueSubject<CGPoint, Never>(.zero)
     let mouseDown = PassthroughSubject<NSEvent, Never>()
+    let keyDown = PassthroughSubject<NSEvent, Never>()
 
     private var mouseMoveMonitor: EventMonitor?
     private var mouseDownMonitor: EventMonitor?
     private var mouseDraggedMonitor: EventMonitor?
+    private var keyDownMonitor: EventMonitor?
 
     private init() {
         setupMonitors()
@@ -37,11 +39,18 @@ class EventMonitors {
             self?.mouseLocation.send(NSEvent.mouseLocation)
         }
         mouseDraggedMonitor?.start()
+
+        // Key down monitor for ESC key to close the notch
+        keyDownMonitor = EventMonitor(mask: .keyDown) { [weak self] event in
+            self?.keyDown.send(event)
+        }
+        keyDownMonitor?.start()
     }
 
     deinit {
         mouseMoveMonitor?.stop()
         mouseDownMonitor?.stop()
         mouseDraggedMonitor?.stop()
+        keyDownMonitor?.stop()
     }
 }

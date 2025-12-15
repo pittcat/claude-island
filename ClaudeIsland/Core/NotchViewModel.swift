@@ -135,6 +135,21 @@ class NotchViewModel: ObservableObject {
                 self?.handleMouseDown()
             }
             .store(in: &cancellables)
+
+        // Handle ESC key to close the notch
+        events.keyDown
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in
+                self?.handleKeyDown(event)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleKeyDown(_ event: NSEvent) {
+        // ESC key to close the notch
+        if event.keyCode == KeyCode.escape && status == .opened {
+            notchClose()
+        }
     }
 
     /// Whether we're in chat mode (sticky behavior)

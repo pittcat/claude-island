@@ -7,6 +7,12 @@
 
 import Foundation
 
+// MARK: - Key Codes
+
+enum KeyCode {
+    static let escape: UInt16 = 53
+}
+
 /// Available notification sounds
 enum NotificationSound: String, CaseIterable {
     case none = "None"

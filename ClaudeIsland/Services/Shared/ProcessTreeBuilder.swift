@@ -71,6 +71,30 @@ struct ProcessTreeBuilder: Sendable {
         return false
     }
 
+    /// Check if a process has nvim in its parent chain
+    /// Returns the nvim PID if found, nil otherwise
+    nonisolated func findNeovimParent(pid: Int, tree: [Int: ProcessInfo]) -> Int? {
+        var current = pid
+        var depth = 0
+
+        while current > 1 && depth < 20 {
+            guard let info = tree[current] else { break }
+            let cmdLower = info.command.lowercased()
+            if cmdLower.contains("nvim") || cmdLower.hasSuffix("/nvim") {
+                return current
+            }
+            current = info.ppid
+            depth += 1
+        }
+
+        return nil
+    }
+
+    /// Check if a process is running inside Neovim terminal
+    nonisolated func isInNeovim(pid: Int, tree: [Int: ProcessInfo]) -> Bool {
+        return findNeovimParent(pid: pid, tree: tree) != nil
+    }
+
     /// Walk up the process tree to find the terminal app PID
     nonisolated func findTerminalPid(forProcess pid: Int, tree: [Int: ProcessInfo]) -> Int? {
         var current = pid

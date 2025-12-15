@@ -129,6 +129,11 @@ actor SessionStore {
         if let pid = event.pid {
             let tree = ProcessTreeBuilder.shared.buildTree()
             session.isInTmux = ProcessTreeBuilder.shared.isInTmux(pid: pid, tree: tree)
+            // Check if running in Neovim
+            if let nvimPid = ProcessTreeBuilder.shared.findNeovimParent(pid: pid, tree: tree) {
+                session.isInNeovim = true
+                session.nvimPid = nvimPid
+            }
         }
         if let tmuxPaneId = event.tmuxPaneId, !tmuxPaneId.isEmpty {
             session.tmuxPaneId = tmuxPaneId

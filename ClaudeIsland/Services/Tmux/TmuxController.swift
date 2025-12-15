@@ -60,4 +60,29 @@ actor TmuxController {
             return false
         }
     }
+
+    /// Send keys to a tmux pane
+    /// - Parameters:
+    ///   - target: The tmux target to send keys to
+    ///   - keys: The keys/text to send
+    ///   - literal: If true, send as literal text (using -l flag), otherwise interpret special keys
+    /// - Returns: True if successful
+    func sendKeys(to target: TmuxTarget, keys: String, literal: Bool = false) async -> Bool {
+        guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {
+            return false
+        }
+
+        var args = ["send-keys", "-t", target.targetString]
+        if literal {
+            args.append("-l")
+        }
+        args.append(keys)
+
+        do {
+            _ = try await ProcessExecutor.shared.run(tmuxPath, arguments: args)
+            return true
+        } catch {
+            return false
+        }
+    }
 }

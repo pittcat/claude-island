@@ -355,14 +355,14 @@ struct ChatView: View {
 
     // MARK: - Input Bar
 
-    /// Can send messages only if session is in tmux
+    /// Can send messages only if session is in tmux or neovim
     private var canSendMessages: Bool {
-        session.isInTmux && (session.tmuxPaneId != nil || session.pid != nil || session.tty != nil)
+        session.canSendMessages
     }
 
     private var inputBar: some View {
         HStack(spacing: 10) {
-            TextField(canSendMessages ? "Message Claude..." : "Open Claude Code in tmux to enable messaging", text: $inputText)
+            TextField(canSendMessages ? "Message Claude..." : "Open Claude in tmux/neovim to enable messaging", text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
@@ -481,7 +481,20 @@ struct ChatView: View {
     }
 
     private func sendToSession(_ text: String) async {
-        guard session.isInTmux else { return }
+        // Priority 1: Neovim RPC (if available)
+        if session.canSendViaNeovim {
+            do {
+                let _ = try await NeovimBridge.shared.sendText(text, for: session)
+                return
+            } catch {
+                // Fall through to tmux
+            }
+        }
+
+        // Priority 2: tmux
+        guard session.isInTmux else {
+            return
+        }
 
         let tmuxPaneId = session.tmuxPaneId
         let pid = session.pid
