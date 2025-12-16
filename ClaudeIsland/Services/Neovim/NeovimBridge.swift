@@ -72,10 +72,35 @@ struct NeovimInstance: Codable, Equatable, Sendable {
     let cwd: String?
     let registeredAt: Date
 
+    // New fields for tmux info
+    let tmuxSession: String?
+    let tmuxWindow: String?
+    let tmuxPane: String?
+
     /// The registry file path
     static var registryPath: String {
         let xdgRuntime = Foundation.ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"] ?? "/tmp"
         return "\(xdgRuntime)/claude-island-nvim-registry.json"
+    }
+
+    /// Convenience initializer with tmux info
+    static func createWithTmuxInfo(
+        pid: Int,
+        listenAddress: String,
+        cwd: String?,
+        tmuxSession: String?,
+        tmuxWindow: String?,
+        tmuxPane: String?
+    ) -> NeovimInstance {
+        return NeovimInstance(
+            pid: pid,
+            listenAddress: listenAddress,
+            cwd: cwd,
+            registeredAt: Date(),
+            tmuxSession: tmuxSession,
+            tmuxWindow: tmuxWindow,
+            tmuxPane: tmuxPane
+        )
     }
 }
 
@@ -116,32 +141,16 @@ actor NeovimBridge {
         mode: String = "append_and_enter",
         ensureTerminal: Bool = true
     ) async throws -> Int {
-        let traceId = String(UUID().uuidString.prefix(8))
-        let textPreview = text.prefix(50)
-
-        Self.logger.info("[\(traceId, privacy: .public)] sendText START - text: '\(textPreview, privacy: .public)...', mode: \(mode, privacy: .public)")
-        Self.logger.info("[\(traceId, privacy: .public)] Session: id=\(sessionState.sessionId.prefix(8), privacy: .public), cwd=\(sessionState.cwd, privacy: .public)")
-        Self.logger.info("[\(traceId, privacy: .public)] Session state: isInNeovim=\(sessionState.isInNeovim), nvimPid=\(sessionState.nvimPid.map(String.init) ?? "nil", privacy: .public), canSendViaNeovim=\(sessionState.canSendViaNeovim)")
-
         guard !text.isEmpty else {
-            Self.logger.error("[\(traceId, privacy: .public)] FAILED: Empty text")
             throw NeovimBridgeError.emptyText
         }
 
         // Find Neovim instance
-        let instance: NeovimInstance
-        do {
-            Self.logger.info("[\(traceId, privacy: .public)] Finding Neovim instance...")
-            instance = try await findNeovimInstance(for: sessionState)
-            Self.logger.info("[\(traceId, privacy: .public)] Found instance: pid=\(instance.pid), socket=\(instance.listenAddress, privacy: .public)")
-        } catch {
-            Self.logger.error("[\(traceId, privacy: .public)] FAILED to find nvim instance: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
+        let instance = try await findNeovimInstance(for: sessionState)
 
         // Build the RPC payload
         let payload: [String: Any] = [
-            "trace_id": traceId,
+            "trace_id": String(UUID().uuidString.prefix(8)),
             "ts_ms": Int(Date().timeIntervalSince1970 * 1000),
             "source": "claudeisland",
             "session_id": sessionState.sessionId,
@@ -154,24 +163,14 @@ actor NeovimBridge {
             ]
         ]
 
-        Self.logger.info("[\(traceId, privacy: .public)] Calling RPC...")
-        let response: NeovimRPCResponse
-        do {
-            response = try await callRPC(instance: instance, payload: payload, traceId: traceId)
-        } catch {
-            Self.logger.error("[\(traceId, privacy: .public)] RPC call FAILED: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
+        let response = try await callRPC(instance: instance, payload: payload, traceId: String(UUID().uuidString.prefix(8)))
 
         guard response.ok else {
             let errorMsg = response.error ?? "Unknown error"
-            Self.logger.error("[\(traceId, privacy: .public)] RPC response error: \(errorMsg, privacy: .public)")
             throw NeovimBridgeError.rpcFailed(errorMsg)
         }
 
-        let injectedBytes = response.data?.injected_bytes ?? 0
-        Self.logger.info("[\(traceId, privacy: .public)] sendText SUCCESS - injected \(injectedBytes) bytes")
-        return injectedBytes
+        return response.data?.injected_bytes ?? 0
     }
 
     /// Check if a Neovim instance is available for a session
@@ -245,7 +244,11 @@ actor NeovimBridge {
             return instance
         }
 
-        Self.logger.error("No Neovim instance found for session")
+        // Strategy 4: Global tmux search
+        if let instance = await findInAllTmuxSessions(for: sessionState) {
+            return instance
+        }
+
         throw NeovimBridgeError.noNeovimInstance
     }
 
@@ -256,18 +259,42 @@ actor NeovimBridge {
             return nil
         }
 
-        // Try to match by CWD first
-        if let match = registry.instances.first(where: { $0.cwd == sessionState.cwd }) {
+        // Strategy 1: Perfect match (all fields match)
+        if let match = registry.instances.first(where: { instance in
+            instance.cwd == sessionState.cwd &&
+            (instance.tmuxSession != nil || instance.tmuxPane != nil)
+        }) {
             if validateInstance(match) {
                 return match
             }
         }
 
-        // If only one instance, use it
+        // Strategy 2: Match by CWD (might be multiple)
+        let cwdMatches = registry.instances.filter { $0.cwd == sessionState.cwd }
+        if !cwdMatches.isEmpty {
+            // If only one, use it
+            if cwdMatches.count == 1 {
+                let match = cwdMatches[0]
+                if validateInstance(match) {
+                    return match
+                }
+            } else {
+                // Multiple matches, try to filter by tmux info
+                for match in cwdMatches {
+                    if match.tmuxPane != nil || match.tmuxSession != nil {
+                        if validateInstance(match) {
+                            return match
+                        }
+                    }
+                }
+            }
+        }
+
+        // Strategy 3: Fallback to single instance
         if registry.instances.count == 1 {
-            let instance = registry.instances[0]
-            if validateInstance(instance) {
-                return instance
+            let match = registry.instances[0]
+            if validateInstance(match) {
+                return match
             }
         }
 
@@ -296,7 +323,10 @@ actor NeovimBridge {
                 pid: nvimPid,
                 listenAddress: listenAddr,
                 cwd: sessionState.cwd,
-                registeredAt: Date()
+                registeredAt: Date(),
+                tmuxSession: nil,
+                tmuxWindow: nil,
+                tmuxPane: nil
             )
         }
 
@@ -323,7 +353,10 @@ actor NeovimBridge {
                         pid: pid,
                         listenAddress: listenAddr,
                         cwd: cwd,
-                        registeredAt: Date()
+                        registeredAt: Date(),
+                        tmuxSession: nil,
+                        tmuxWindow: nil,
+                        tmuxPane: nil
                     )
                 }
             }
@@ -373,66 +406,64 @@ actor NeovimBridge {
 
     // MARK: - RPC Communication
 
-    /// Call Neovim RPC via nvim --server --remote-expr
+    /// Call Neovim RPC via direct msgpack-rpc socket communication
+    /// This bypasses the --remote-expr bug in Neovim 0.9.0+
     private func callRPC(instance: NeovimInstance, payload: [String: Any], traceId: String) async throws -> NeovimRPCResponse {
-        let nvimPath: String
-        do {
-            nvimPath = try await findNvimPath()
-        } catch {
-            Self.logger.error("[\(traceId, privacy: .public)] callRPC: nvim not found - \(error.localizedDescription, privacy: .public)")
-            throw error
+        // 准备 Lua 代码
+        let luaCode = """
+        local params = ...
+        return require('claudecode.island_rpc').handle_rpc(params)
+        """
+
+        // 序列化参数为 JSON
+        let paramsData = try JSONSerialization.data(withJSONObject: payload)
+        let paramsJson = String(data: paramsData, encoding: .utf8)!
+
+        // 调用 Python helper
+        let helperPath = "/Users/pittcat/.vim/plugged/claudecode.nvim/scripts/rpc_helper.py"
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [
+            helperPath,
+            instance.listenAddress,
+            luaCode,
+            paramsJson
+        ]
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        try process.run()
+
+        // 等待执行完成（带超时）
+        let timeoutDate = Date().addingTimeInterval(5.0)
+        while process.isRunning && Date() < timeoutDate {
+            try await Task.sleep(nanoseconds: 100_000_000) // 0.1秒
         }
 
-        // Serialize payload to JSON
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload),
-              let jsonString = String(data: jsonData, encoding: .utf8) else {
-            Self.logger.error("[\(traceId, privacy: .public)] callRPC: JSON encoding failed")
-            throw NeovimBridgeError.jsonEncodingFailed
+        if process.isRunning {
+            process.terminate()
+            throw NeovimBridgeError.rpcFailed("RPC call timed out after 5 seconds")
         }
 
-        // Escape the JSON string for Vim expression
-        let escapedJson = jsonString
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "''")
+        // 读取输出
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
 
-        let vimExpr = "v:lua.claudecode_island_rpc('\(escapedJson)')"
-
-        let result = await ProcessExecutor.shared.runWithResult(
-            nvimPath,
-            arguments: [
-                "--server", instance.listenAddress,
-                "--remote-expr", vimExpr
-            ],
-            environment: [
-                "TERM": "dumb",  // Prevent terminal control sequences
-                "NO_COLOR": "1"
-            ]
-        )
-
-        switch result {
-        case .success(let processResult):
-            let rawOutput = processResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Extract JSON from output (filter out terminal control sequences)
-            let output = Self.extractJSON(from: rawOutput)
-
-            guard let data = output.data(using: .utf8) else {
-                Self.logger.error("[\(traceId, privacy: .public)] callRPC: Output is not valid UTF-8")
-                throw NeovimBridgeError.invalidResponse("Not valid UTF-8")
-            }
-
-            do {
-                let response = try JSONDecoder().decode(NeovimRPCResponse.self, from: data)
-                return response
-            } catch {
-                Self.logger.error("[\(traceId, privacy: .public)] RPC JSON decode failed - \(error.localizedDescription, privacy: .public)")
-                throw NeovimBridgeError.invalidResponse(error.localizedDescription)
-            }
-
-        case .failure(let error):
-            Self.logger.error("[\(traceId, privacy: .public)] RPC process execution failed - \(error.localizedDescription, privacy: .public)")
-            throw NeovimBridgeError.rpcFailed(error.localizedDescription)
+        guard let rawOutput = String(data: outputData, encoding: .utf8) else {
+            throw NeovimBridgeError.rpcFailed("Failed to decode output")
         }
+
+        // 解析 JSON
+        guard let jsonData = rawOutput.data(using: .utf8),
+              let response = try? JSONDecoder().decode(NeovimRPCResponse.self, from: jsonData) else {
+            throw NeovimBridgeError.rpcFailed("JSON decode failed")
+        }
+
+        return response
     }
 
     /// Get terminal status from a specific instance
@@ -455,28 +486,19 @@ actor NeovimBridge {
         // Try to find JSON boundaries
         guard let jsonStart = output.firstIndex(of: "{"),
               let jsonEnd = output.lastIndex(of: "}") else {
-            // No JSON found, return original (might be error message)
-            return output
+            // No JSON found, return empty (will cause clear error)
+            return "{}"
         }
 
-        // Extract JSON portion
+        // Extract JSON portion - simply take everything between first { and last }
         let startIndex = jsonStart
         let endIndex = output.index(after: jsonEnd)
 
         guard startIndex < endIndex else {
-            return output
+            return "{}"
         }
 
-        let extracted = String(output[startIndex..<endIndex])
-
-        // Validate it's actual JSON by trying to parse it
-        if let data = extracted.data(using: .utf8),
-           (try? JSONSerialization.jsonObject(with: data)) != nil {
-            return extracted
-        }
-
-        // If extraction failed, return original
-        return output
+        return String(output[startIndex..<endIndex])
     }
 
     /// Find nvim executable path
@@ -613,5 +635,243 @@ actor NeovimBridge {
         guard let output = result else { return nil }
 
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Debug Tools
+
+    /// Debug tool: List all available Neovim instances
+    func listAvailableInstances() async -> [String] {
+        var instances: [String] = []
+
+        // Get from registry
+        if let registry = await loadRegistry() {
+            for instance in registry.instances {
+                let status = validateInstance(instance) ? "RUNNING" : "DEAD"
+                let tmuxInfo = instance.tmuxSession.map { "\($0):\(instance.tmuxWindow ?? "").\(instance.tmuxPane ?? "")" } ?? "N/A"
+                instances.append("PID:\(instance.pid) [\(status)] SOCKET:\(instance.listenAddress) CWD:\(instance.cwd ?? "N/A") TMUX:\(tmuxInfo)")
+            }
+        }
+
+        // Get from process tree
+        if let output = ProcessExecutor.shared.runSyncOrNil("/usr/bin/pgrep", arguments: ["-x", "nvim"]) {
+            let pids = output.split(separator: "\n").compactMap { Int($0) }
+            for pid in pids {
+                if let cwd = getProcessCwd(pid: pid),
+                   let listenAddr = await getNeovimListenAddress(pid: pid) {
+                    if !instances.contains(where: { $0.hasPrefix("PID:\(pid)") }) {
+                        instances.append("PID:\(pid) [PROCESS] SOCKET:\(listenAddr) CWD:\(cwd)")
+                    }
+                }
+            }
+        }
+
+        return instances
+    }
+
+    /// Debug tool: Check specific session's Neovim instance
+    func debugSession(_ sessionId: String) async -> [String] {
+        guard let session = await SessionStore.shared.session(for: sessionId) else {
+            return ["Session not found"]
+        }
+
+        var debugInfo: [String] = [
+            "=== Session Debug: \(sessionId.prefix(8)) ===",
+            "CWD: \(session.cwd)",
+            "PID: \(session.pid.map(String.init) ?? "nil")",
+            "IsInTmux: \(session.isInTmux)",
+            "IsInNeovim: \(session.isInNeovim)",
+            "NvimPid: \(session.nvimPid.map(String.init) ?? "nil")",
+            "CanSendViaNeovim: \(session.canSendViaNeovim)",
+            "",
+            "=== Searching for Neovim instances ==="
+        ]
+
+        // Search all instances
+        let allInstances = await listAvailableInstances()
+        for instance in allInstances {
+            debugInfo.append("  \(instance)")
+        }
+
+        // Try to find matching instance
+        do {
+            let match = try await findNeovimInstance(for: session)
+            debugInfo.append("")
+            debugInfo.append("=== MATCH FOUND ===")
+            debugInfo.append("PID: \(match.pid)")
+            debugInfo.append("Socket: \(match.listenAddress)")
+            debugInfo.append("CWD: \(match.cwd ?? "nil")")
+        } catch {
+            debugInfo.append("")
+            debugInfo.append("=== NO MATCH FOUND ===")
+            debugInfo.append("Error: \(error.localizedDescription)")
+        }
+
+        return debugInfo
+    }
+
+    // MARK: - Global TMUX Search
+
+    /// Search in all tmux sessions for a Neovim instance
+    private func findInAllTmuxSessions(for sessionState: SessionState) async -> NeovimInstance? {
+        // Get tmux path
+        guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {
+            return nil
+        }
+
+        // Strategy 4a: Find by CWD in all tmux sessions
+        if let instance = await findByCwdInAllTmuxSessions(sessionState.cwd, tmuxPath: tmuxPath) {
+            return instance
+        }
+
+        // Strategy 4b: Find by process tree analysis in tmux panes
+        if let instance = await findByProcessTreeInTmux(sessionState, tmuxPath: tmuxPath) {
+            return instance
+        }
+
+        return nil
+    }
+
+    /// Find Neovim by CWD in all tmux sessions
+    private func findByCwdInAllTmuxSessions(_ cwd: String, tmuxPath: String) async -> NeovimInstance? {
+        // List all panes with their CWD
+        let result = await ProcessExecutor.shared.runWithResult(
+            tmuxPath,
+            arguments: [
+                "list-panes", "-a", "-F",
+                "#{session_name}:#{window_index}.#{pane_index} #{pane_pid} #{pane_current_path}"
+            ]
+        )
+
+        guard case .success(let processResult) = result else {
+            return nil
+        }
+
+        let lines = processResult.output.components(separatedBy: "\n")
+        for line in lines {
+            let parts = line.split(separator: " ", maxSplits: 2)
+            guard parts.count >= 3,
+                  let panePid = Int(parts[1]) else {
+                continue
+            }
+
+            let panePath = String(parts[2])
+
+            if panePath == cwd {
+                // Check if this pane's process tree has Neovim
+                if let nvimPid = await findNeovimInPaneProcessTree(panePid: panePid) {
+                    if let listenAddr = await getNeovimListenAddress(pid: nvimPid) {
+                        return NeovimInstance(
+                            pid: nvimPid,
+                            listenAddress: listenAddr,
+                            cwd: panePath,
+                            registeredAt: Date(),
+                            tmuxSession: nil,
+                            tmuxWindow: nil,
+                            tmuxPane: nil
+                        )
+                    }
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Find Neovim by process tree analysis in tmux panes
+    private func findByProcessTreeInTmux(_ sessionState: SessionState, tmuxPath: String) async -> NeovimInstance? {
+        // List all panes with their PID
+        let result = await ProcessExecutor.shared.runWithResult(
+            tmuxPath,
+            arguments: [
+                "list-panes", "-a", "-F",
+                "#{session_name}:#{window_index}.#{pane_index} #{pane_pid}"
+            ]
+        )
+
+        guard case .success(let processResult) = result else {
+            return nil
+        }
+
+        let lines = processResult.output.components(separatedBy: "\n")
+        for line in lines {
+            let parts = line.split(separator: " ", maxSplits: 1)
+            guard parts.count >= 2,
+                  let panePid = Int(parts[1]) else {
+                continue
+            }
+
+            // Check if this pane's process tree contains the session's PID
+            if sessionState.pid != nil, sessionState.pid == panePid {
+                // Check if Neovim is in the tree
+                if let nvimPid = await findNeovimInPaneProcessTree(panePid: panePid) {
+                    if let listenAddr = await getNeovimListenAddress(pid: nvimPid) {
+                        let cwd = getProcessCwd(pid: panePid) ?? sessionState.cwd
+                        return NeovimInstance(
+                            pid: nvimPid,
+                            listenAddress: listenAddr,
+                            cwd: cwd,
+                            registeredAt: Date(),
+                            tmuxSession: nil,
+                            tmuxWindow: nil,
+                            tmuxPane: nil
+                        )
+                    }
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Find Neovim in a pane's process tree
+    private func findNeovimInPaneProcessTree(panePid: Int) async -> Int? {
+        // Simulate building process tree (limit depth to avoid loops)
+        var visited: Set<Int> = []
+        var queue: [Int] = [panePid]
+        var depth = 0
+
+        while !queue.isEmpty && depth < 10 {
+            let currentPid = queue.removeFirst()
+            if visited.contains(currentPid) {
+                continue
+            }
+            visited.insert(currentPid)
+
+            // Check if current process is Neovim
+            if let processName = getProcessName(pid: currentPid),
+               processName.lowercased().contains("nvim") {
+                return currentPid
+            }
+
+            // Get child processes
+            let children = getChildProcesses(pid: currentPid)
+            queue.append(contentsOf: children)
+
+            depth += 1
+        }
+
+        return nil
+    }
+
+    /// Get all child processes for a PID
+    private func getChildProcesses(pid: Int) -> [Int] {
+        let result = ProcessExecutor.shared.runSyncOrNil(
+            "/bin/ps",
+            arguments: ["-o", "pid,ppid", "--no-headers", "-ppid", String(pid)]
+        )
+
+        guard let output = result else {
+            return []
+        }
+
+        return output.components(separatedBy: "\n")
+            .compactMap { line in
+                let parts = line.trimmingCharacters(in: .whitespaces).split(separator: " ")
+                guard parts.count >= 1,
+                      let childPid = Int(parts[0]) else {
+                    return nil
+                }
+                return childPid
+            }
     }
 }

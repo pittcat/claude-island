@@ -6,10 +6,13 @@
 //
 
 import Foundation
+import os.log
 
 /// Finds tmux session/window/pane targets for Claude processes
 actor TmuxTargetFinder {
     static let shared = TmuxTargetFinder()
+
+    private let logger = Logger(subsystem: "com.claudeisland", category: "TmuxTargetFinder")
 
     private init() {}
 
@@ -117,6 +120,58 @@ actor TmuxTargetFinder {
 
         let activeTarget = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return sessionTarget.targetString == activeTarget
+    }
+
+    /// Find target in all tmux sessions by working directory
+    func findTargetInAllSessions(forWorkingDirectory workingDir: String) async -> TmuxTarget? {
+        guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {
+            return nil
+        }
+
+        // Get all tmux session info
+        let sessionsResult = await runTmuxCommand(tmuxPath: tmuxPath, args: ["list-sessions", "-F", "#{session_name}"])
+        guard let sessionsOutput = sessionsResult else {
+            return nil
+        }
+
+        let sessionNames = sessionsOutput.components(separatedBy: "\n").filter { !$0.isEmpty }
+
+        for sessionName in sessionNames {
+            logger.debug("Searching session: \(sessionName)")
+
+            // Find matching pane in each session
+            if let target = await findTargetInSession(sessionName: sessionName, workingDir: workingDir, tmuxPath: tmuxPath) {
+                return target
+            }
+        }
+
+        return nil
+    }
+
+    /// Find matching pane in a specific session
+    private func findTargetInSession(sessionName: String, workingDir: String, tmuxPath: String) async -> TmuxTarget? {
+        let result = await runTmuxCommand(tmuxPath: tmuxPath, args: [
+            "list-panes", "-t", sessionName, "-F",
+            "#{window_index}.#{pane_index} #{pane_current_path}"
+        ])
+
+        guard let output = result else {
+            return nil
+        }
+
+        for line in output.components(separatedBy: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+
+            let targetString = String(parts[0])
+            let panePath = String(parts[1])
+
+            if panePath == workingDir {
+                return TmuxTarget(from: "\(sessionName):\(targetString)")
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Private Methods

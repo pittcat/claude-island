@@ -48,8 +48,6 @@ actor SessionStore {
 
     /// Process any session event - the ONLY way to mutate state
     func process(_ event: SessionEvent) async {
-        Self.logger.debug("Processing: \(String(describing: event), privacy: .public)")
-
         switch event {
         case .hookReceived(let hookEvent):
             await processHookEvent(hookEvent)
@@ -128,7 +126,9 @@ actor SessionStore {
         session.pid = event.pid
         if let pid = event.pid {
             let tree = ProcessTreeBuilder.shared.buildTree()
+
             session.isInTmux = ProcessTreeBuilder.shared.isInTmux(pid: pid, tree: tree)
+
             // Check if running in Neovim
             if let nvimPid = ProcessTreeBuilder.shared.findNeovimParent(pid: pid, tree: tree) {
                 session.isInNeovim = true
@@ -154,12 +154,9 @@ actor SessionStore {
 
         if session.phase.canTransition(to: newPhase) {
             session.phase = newPhase
-        } else {
-            Self.logger.debug("Invalid transition: \(String(describing: session.phase), privacy: .public) -> \(String(describing: newPhase), privacy: .public), ignoring")
         }
 
         if event.event == "PermissionRequest", let toolUseId = event.toolUseId {
-            Self.logger.debug("Setting tool \(toolUseId.prefix(12), privacy: .public) status to waitingForApproval")
             updateToolStatus(in: &session, toolId: toolUseId, status: .waitingForApproval)
         }
 
@@ -232,7 +229,6 @@ actor SessionStore {
                         timestamp: Date()
                     )
                     session.chatItems.append(placeholderItem)
-                    Self.logger.debug("Created placeholder tool entry for \(toolUseId.prefix(16), privacy: .public)")
                 }
             }
 
@@ -267,18 +263,17 @@ actor SessionStore {
             if event.tool == "Task", let toolUseId = event.toolUseId {
                 let description = event.toolInput?["description"]?.value as? String
                 session.subagentState.startTask(taskToolId: toolUseId, description: description)
-                Self.logger.debug("Started Task subagent tracking: \(toolUseId.prefix(12), privacy: .public)")
             }
 
         case "PostToolUse":
             if event.tool == "Task" {
-                Self.logger.debug("PostToolUse for Task received (subagent still running)")
+                // Subagent still running
             }
 
         case "SubagentStop":
             // SubagentStop fires when a subagent completes - stop tracking
             // Subagent tools are populated from agent file in processFileUpdated
-            Self.logger.debug("SubagentStop received")
+            break
 
         default:
             break
@@ -343,7 +338,6 @@ actor SessionStore {
             ))
             if session.phase.canTransition(to: newPhase) {
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool: \(nextPending.id.prefix(12), privacy: .public)")
             }
         } else {
             // No more pending tools - transition to processing
@@ -390,7 +384,6 @@ actor SessionStore {
                     type: .toolCall(tool),
                     timestamp: session.chatItems[i].timestamp
                 )
-                Self.logger.debug("Tool \(toolUseId.prefix(12), privacy: .public) completed with status: \(String(describing: result.status), privacy: .public)")
                 break
             }
         }
@@ -406,7 +399,6 @@ actor SessionStore {
                     receivedAt: nextPending.timestamp
                 ))
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool after completion: \(nextPending.id.prefix(12), privacy: .public)")
             } else {
                 if session.phase.canTransition(to: .processing) {
                     session.phase = .processing
@@ -445,7 +437,6 @@ actor SessionStore {
             ))
             if session.phase.canTransition(to: newPhase) {
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool after denial: \(nextPending.id.prefix(12), privacy: .public)")
             }
         } else {
             // No more pending tools - transition to processing (Claude will handle denial)
@@ -481,7 +472,6 @@ actor SessionStore {
             ))
             if session.phase.canTransition(to: newPhase) {
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool after socket failure: \(nextPending.id.prefix(12), privacy: .public)")
             }
         } else {
             // No more pending tools - clear permission state
@@ -537,7 +527,6 @@ actor SessionStore {
             session.subagentState = SubagentState()
 
             session.needsClearReconciliation = false
-            Self.logger.debug("Clear reconciliation: kept \(session.chatItems.count) of \(previousCount) items")
         }
 
         if payload.isIncremental {
@@ -689,8 +678,6 @@ actor SessionStore {
                 type: .toolCall(tool),
                 timestamp: session.chatItems[i].timestamp
             )
-
-            Self.logger.debug("Populated \(subagentToolInfos.count) subagent tools for Task \(taskToolId.prefix(12), privacy: .public) from agent \(taskResult.agentId.prefix(8), privacy: .public)")
         }
     }
 
@@ -785,7 +772,6 @@ actor SessionStore {
     }
 
     private func updateToolStatus(in session: inout SessionState, toolId: String, status: ToolStatus) {
-        var found = false
         for i in 0..<session.chatItems.count {
             if session.chatItems[i].id == toolId,
                case .toolCall(var tool) = session.chatItems[i].type {
@@ -795,13 +781,8 @@ actor SessionStore {
                     type: .toolCall(tool),
                     timestamp: session.chatItems[i].timestamp
                 )
-                found = true
                 break
             }
-        }
-        if !found {
-            let count = session.chatItems.count
-            Self.logger.warning("Tool \(toolId.prefix(16), privacy: .public) not found in chatItems (count: \(count))")
         }
     }
 
@@ -839,14 +820,10 @@ actor SessionStore {
     private func processClearDetected(sessionId: String) async {
         guard var session = sessions[sessionId] else { return }
 
-        Self.logger.info("Processing /clear for session \(sessionId.prefix(8), privacy: .public)")
-
         // Mark that a clear happened - the next fileUpdated will reconcile
         // by removing items that no longer exist in the parser's state
         session.needsClearReconciliation = true
         sessions[sessionId] = session
-
-        Self.logger.info("/clear processed for session \(sessionId.prefix(8), privacy: .public) - marked for reconciliation")
     }
 
     // MARK: - Session End Processing
@@ -951,9 +928,6 @@ actor SessionStore {
                 return
             }
 
-            Self.logger.debug(
-                "File sync delta: session \(sessionId.prefix(8), privacy: .public), newMessages=\(result.newMessages.count), newToolResults=\(result.hasNewToolResults, privacy: .public), completedTools=\(result.completedToolIds.count)"
-            )
 
             let payload = FileUpdatePayload(
                 sessionId: sessionId,

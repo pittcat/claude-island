@@ -516,25 +516,14 @@ struct ChatView: View {
     }
 
     private func sendToSession(_ text: String) async {
-        let traceId = String(UUID().uuidString.prefix(8))
-        let textPreview = String(text.prefix(30))
-
-        Self.logger.info("[\(traceId, privacy: .public)] sendToSession START - text: '\(textPreview, privacy: .public)...'")
-        Self.logger.info("[\(traceId, privacy: .public)] Session: canSendViaNeovim=\(session.canSendViaNeovim), isInTmux=\(session.isInTmux), isInNeovim=\(session.isInNeovim)")
-
         // Priority 1: Neovim RPC (if available)
         if session.canSendViaNeovim {
-            Self.logger.info("[\(traceId, privacy: .public)] Trying Neovim RPC...")
             do {
                 let bytes = try await NeovimBridge.shared.sendText(text, for: session)
-                Self.logger.info("[\(traceId, privacy: .public)] Neovim RPC SUCCESS - sent \(bytes) bytes")
                 return
             } catch {
-                Self.logger.error("[\(traceId, privacy: .public)] Neovim RPC FAILED: \(error.localizedDescription, privacy: .public)")
-                Self.logger.warning("[\(traceId, privacy: .public)] FALLING BACK TO TMUX!")
+                // Fall back to tmux
             }
-        } else {
-            Self.logger.info("[\(traceId, privacy: .public)] Neovim RPC not available, using tmux")
         }
 
         // Priority 2: tmux
@@ -547,41 +536,35 @@ struct ChatView: View {
         let tty = session.tty
         let cwd = session.cwd
 
+        // Strategy 2a: Find by paneId
         if let tmuxPaneId, !tmuxPaneId.isEmpty {
             if let target = await TmuxController.shared.findTmuxTarget(forPaneId: tmuxPaneId) {
-                Self.logger.debug("sendToSession routed by paneId (session: \(self.sessionId.prefix(8), privacy: .public), paneId: \(tmuxPaneId, privacy: .public))")
                 _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
                 return
             }
-            Self.logger.warning("sendToSession paneId not found (session: \(self.sessionId.prefix(8), privacy: .public), paneId: \(tmuxPaneId, privacy: .public))")
         }
 
+        // Strategy 2b: Find by TTY
         if let tty {
             if let target = await findTmuxTarget(tty: tty) {
-                Self.logger.debug("sendToSession routed by tty (session: \(self.sessionId.prefix(8), privacy: .public), tty: \(tty, privacy: .public))")
                 _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
                 return
             }
         }
 
+        // Strategy 2c: Find by PID
         if let pid {
             if let target = await TmuxController.shared.findTmuxTarget(forClaudePid: pid) {
-                Self.logger.debug("sendToSession routed by pid (session: \(self.sessionId.prefix(8), privacy: .public), pid: \(pid, privacy: .public))")
                 _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
                 return
             }
         }
 
+        // Strategy 2d: Find by CWD
         if let target = await TmuxController.shared.findTmuxTarget(forWorkingDirectory: cwd) {
-            Self.logger.debug("sendToSession routed by cwd (session: \(self.sessionId.prefix(8), privacy: .public), cwd: \(cwd, privacy: .public))")
             _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
             return
         }
-
-        let pidText = pid.map(String.init) ?? "nil"
-        let ttyText = tty ?? "nil"
-        let paneIdText = tmuxPaneId ?? "nil"
-        Self.logger.warning("sendToSession failed to route (session: \(self.sessionId.prefix(8), privacy: .public), paneId: \(paneIdText, privacy: .public), pid: \(pidText, privacy: .public), tty: \(ttyText, privacy: .public), cwd: \(cwd, privacy: .public))")
     }
 
     private func findTmuxTarget(tty: String) async -> TmuxTarget? {
