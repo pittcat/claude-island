@@ -13,7 +13,6 @@ import OSLog
 actor NeovimHealthChecker {
     static let shared = NeovimHealthChecker()
 
-    private let fileLogger = FileLogger.shared
 
     // MARK: - Configuration
 
@@ -36,14 +35,12 @@ actor NeovimHealthChecker {
     func startMonitoring() async {
         guard !isMonitoring else {
             await MainActor.run {
-                FileLogger.shared.debug("Health checker already running", category: "NeovimHealthChecker")
             }
             return
         }
 
         isMonitoring = true
         await MainActor.run {
-            FileLogger.shared.info("Starting Neovim health checker (interval: \(self.checkInterval)s)", category: "NeovimHealthChecker")
         }
 
         monitoringTask = Task { [weak self] in
@@ -66,7 +63,6 @@ actor NeovimHealthChecker {
         monitoringTask?.cancel()
         monitoringTask = nil
         await MainActor.run {
-            FileLogger.shared.info("Stopped Neovim health checker", category: "NeovimHealthChecker")
         }
     }
 
@@ -74,7 +70,6 @@ actor NeovimHealthChecker {
     func checkSession(_ sessionId: String) async {
         guard let session = await SessionStore.shared.session(for: sessionId) else {
             await MainActor.run {
-                FileLogger.shared.debug("Session not found for health check: \(sessionId.prefix(8))", category: "NeovimHealthChecker")
             }
             return
         }
@@ -100,7 +95,6 @@ actor NeovimHealthChecker {
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("Checking \(neovimSessions.count) Neovim session(s)", category: "NeovimHealthChecker")
         }
 
         // Check each session concurrently
@@ -118,7 +112,6 @@ actor NeovimHealthChecker {
         let sessionId = session.sessionId
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] Health check started for session \(sessionId.prefix(8)), current status: \(session.neovimConnectionStatus.rawValue)", category: "NeovimHealthChecker")
         }
 
         // Dispatch checking status event
@@ -128,7 +121,6 @@ actor NeovimHealthChecker {
         ))
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] Neovim details - isInNeovim: \(session.isInNeovim), listenAddress: \(session.nvimListenAddress ?? "nil"), nvimPid: \(session.nvimPid?.description ?? "nil")", category: "NeovimHealthChecker")
         }
 
         do {
@@ -140,7 +132,6 @@ actor NeovimHealthChecker {
             let newStatus: NeovimConnectionStatus = isConnected ? .connected : .disconnected
 
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] Neovim check result - isConnected: \(isConnected), will set status to: \(newStatus.rawValue)", category: "NeovimHealthChecker")
             }
 
             await SessionStore.shared.process(.neovimStatusChanged(
@@ -150,16 +141,13 @@ actor NeovimHealthChecker {
 
             if isConnected {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] Session \(sessionId.prefix(8)): Neovim connected ✓", category: "NeovimHealthChecker")
                 }
             } else {
                 await MainActor.run {
-                    FileLogger.shared.warning("[DEBUG] Session \(sessionId.prefix(8)): Neovim ping failed ✗", category: "NeovimHealthChecker")
                 }
             }
         } catch {
             await MainActor.run {
-                FileLogger.shared.warning("[DEBUG] Session \(sessionId.prefix(8)): Health check error - \(error.localizedDescription)", category: "NeovimHealthChecker")
             }
 
             await SessionStore.shared.process(.neovimStatusChanged(

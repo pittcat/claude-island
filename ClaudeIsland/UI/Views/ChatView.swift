@@ -625,25 +625,21 @@ struct ChatView: View {
         var neovimError: Error? = nil
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] sendToSession - sessionId: \(sessionId.prefix(8)), canSendViaNeovim: \(session.canSendViaNeovim), neovimConnectionStatus: \(session.neovimConnectionStatus.rawValue), textLength: \(text.count)", category: "ChatView")
         }
 
         // Priority 1: Neovim RPC (if available)
         if session.canSendViaNeovim {
             neovimAttempted = true
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] Attempting Neovim send - listenAddress: \(session.nvimListenAddress ?? "nil"), nvimPid: \(session.nvimPid?.description ?? "nil")", category: "ChatView")
             }
             do {
                 _ = try await NeovimBridge.shared.sendText(text, for: session)
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] Neovim send succeeded ✓", category: "ChatView")
                 }
 
                 // Success - update status to connected (if it was unknown/checking)
                 if session.neovimConnectionStatus != .connected {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] Updating status to connected (was: \(session.neovimConnectionStatus.rawValue))", category: "ChatView")
                     }
                     await SessionStore.shared.process(.neovimStatusChanged(
                         sessionId: sessionId,
@@ -654,7 +650,6 @@ struct ChatView: View {
             } catch {
                 neovimError = error
                 await MainActor.run {
-                    FileLogger.shared.warning("[DEBUG] Neovim send failed ✗ - error: \(error.localizedDescription)", category: "ChatView")
                 }
 
                 // Mark as disconnected and request rediscovery
@@ -666,7 +661,6 @@ struct ChatView: View {
             }
         } else {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] Skipping Neovim - canSendViaNeovim is false", category: "ChatView")
             }
         }
 
@@ -675,14 +669,12 @@ struct ChatView: View {
             // Not in tmux - if we tried Neovim and it failed, that's the error
             if neovimAttempted {
                 await MainActor.run {
-                    FileLogger.shared.error("[DEBUG] No fallback available: Neovim failed and session is not in tmux", category: "ChatView")
                 }
             }
             return false
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] Falling back to tmux - isInTmux: \(session.isInTmux)", category: "ChatView")
         }
 
         let tmuxPaneId = session.tmuxPaneId
@@ -693,125 +685,100 @@ struct ChatView: View {
         // Strategy 2a: Find by paneId
         if let tmuxPaneId, !tmuxPaneId.isEmpty {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] tmux Strategy 2a: trying paneId \(tmuxPaneId)", category: "ChatView")
             }
             if let target = await TmuxController.shared.findTmuxTarget(forPaneId: tmuxPaneId) {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] Found tmux target by paneId: \(target.session):\(target.window).\(target.pane)", category: "ChatView")
                 }
                 if await ToolApprovalHandler.shared.sendMessage(text, to: target) {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] tmux send via paneId succeeded ✓", category: "ChatView")
                     }
                     return true
                 } else {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] tmux send via paneId failed ✗", category: "ChatView")
                     }
                 }
             } else {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] No tmux target found for paneId", category: "ChatView")
                 }
             }
         } else {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] tmux Strategy 2a: skipped (no paneId)", category: "ChatView")
             }
         }
 
         // Strategy 2b: Find by TTY
         if let tty {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] tmux Strategy 2b: trying TTY \(tty)", category: "ChatView")
             }
             if let target = await findTmuxTarget(tty: tty) {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] Found tmux target by TTY: \(target.session):\(target.window).\(target.pane)", category: "ChatView")
                 }
                 if await ToolApprovalHandler.shared.sendMessage(text, to: target) {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] tmux send via TTY succeeded ✓", category: "ChatView")
                     }
                     return true
                 } else {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] tmux send via TTY failed ✗", category: "ChatView")
                     }
                 }
             } else {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] No tmux target found for TTY", category: "ChatView")
                 }
             }
         } else {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] tmux Strategy 2b: skipped (no TTY)", category: "ChatView")
             }
         }
 
         // Strategy 2c: Find by PID
         if let pid {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] tmux Strategy 2c: trying PID \(pid)", category: "ChatView")
             }
             if let target = await TmuxController.shared.findTmuxTarget(forClaudePid: pid) {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] Found tmux target by PID: \(target.session):\(target.window).\(target.pane)", category: "ChatView")
                 }
                 if await ToolApprovalHandler.shared.sendMessage(text, to: target) {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] tmux send via PID succeeded ✓", category: "ChatView")
                     }
                     return true
                 } else {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] tmux send via PID failed ✗", category: "ChatView")
                     }
                 }
             } else {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] No tmux target found for PID", category: "ChatView")
                 }
             }
         } else {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] tmux Strategy 2c: skipped (no PID)", category: "ChatView")
             }
         }
 
         // Strategy 2d: Find by CWD
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] tmux Strategy 2d: trying CWD \(cwd)", category: "ChatView")
         }
         if let target = await TmuxController.shared.findTmuxTarget(forWorkingDirectory: cwd) {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] Found tmux target by CWD: \(target.session):\(target.window).\(target.pane)", category: "ChatView")
             }
             if await ToolApprovalHandler.shared.sendMessage(text, to: target) {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] tmux send via CWD succeeded ✓", category: "ChatView")
                 }
                 return true
             } else {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] tmux send via CWD failed ✗", category: "ChatView")
                 }
             }
         } else {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] No tmux target found for CWD", category: "ChatView")
             }
         }
 
         // All strategies failed
         if neovimAttempted, let error = neovimError {
             await MainActor.run {
-                FileLogger.shared.error("[DEBUG] All send strategies failed. Neovim error: \(error.localizedDescription), tmux fallback also failed for sessionId=\(self.sessionId)", category: "ChatView")
             }
         } else {
             await MainActor.run {
-                FileLogger.shared.error("[DEBUG] Failed to send message: no tmux target succeeded for sessionId=\(self.sessionId)", category: "ChatView")
             }
         }
         return false

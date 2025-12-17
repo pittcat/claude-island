@@ -207,29 +207,24 @@ actor NeovimBridge {
     /// Used for health checking without requiring full SessionState
     func checkConnection(listenAddress: String?, nvimPid: Int?) async throws -> Bool {
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] checkConnection called - address: \(listenAddress ?? "nil"), pid: \(nvimPid?.description ?? "nil")", category: "NeovimBridge")
         }
 
         // Need at least a listen address to attempt connection
         guard let address = listenAddress else {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] No listen address, trying to get from PID", category: "NeovimBridge")
             }
             // Try to get address from PID if available
             if let pid = nvimPid, let addr = await getNeovimListenAddress(pid: pid) {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] Got address from PID: \(addr)", category: "NeovimBridge")
                 }
                 return try await checkConnectionDirect(address: addr, pid: pid)
             }
             await MainActor.run {
-                FileLogger.shared.warning("[DEBUG] No listen address available and couldn't get from PID", category: "NeovimBridge")
             }
             throw NeovimBridgeError.noNeovimInstance
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] Using provided address: \(address)", category: "NeovimBridge")
         }
         return try await checkConnectionDirect(address: address, pid: nvimPid ?? 0)
     }
@@ -237,7 +232,6 @@ actor NeovimBridge {
     /// Direct connection check with known address
     private func checkConnectionDirect(address: String, pid: Int) async throws -> Bool {
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] checkConnectionDirect - address: \(address), pid: \(pid)", category: "NeovimBridge")
         }
 
         let instance = NeovimInstance(
@@ -257,18 +251,15 @@ actor NeovimBridge {
         ]
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] Calling RPC with traceId: \(traceId)", category: "NeovimBridge")
         }
 
         let response = try await callRPC(instance: instance, payload: payload, traceId: traceId)
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] RPC response - ok: \(response.ok), error: \(response.error ?? "nil"), pong: \(response.data?.pong?.description ?? "nil")", category: "NeovimBridge")
         }
 
         let result = response.ok && (response.data?.pong ?? false)
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] Final connection result: \(result)", category: "NeovimBridge")
         }
         return result
     }
@@ -615,31 +606,26 @@ actor NeovimBridge {
     /// Get Neovim's listen address for a PID
     private func getNeovimListenAddress(pid: Int) async -> String? {
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] getNeovimListenAddress called for PID: \(pid)", category: "NeovimBridge")
         }
 
         // Method 1: Check NVIM_LISTEN_ADDRESS environment variable (most reliable)
         if let envAddress = await getNeovimListenAddressFromEnv(pid: pid) {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] Found address from environment variable: \(envAddress)", category: "NeovimBridge")
             }
             return envAddress
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] Environment variable not found, trying lsof", category: "NeovimBridge")
         }
 
         // Method 2: Use lsof to find the Unix domain socket
         if let socketPath = await getNeovimSocketFromLsof(pid: pid) {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] Found address from lsof: \(socketPath)", category: "NeovimBridge")
             }
             return socketPath
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] lsof didn't find socket, checking common locations", category: "NeovimBridge")
         }
 
         // Method 3: Check common Neovim socket locations
@@ -665,7 +651,6 @@ actor NeovimBridge {
                         if item.hasPrefix("nvim.\(pid).") {
                             let fullPath = "\(pathPrefix)/\(item)"
                             await MainActor.run {
-                                FileLogger.shared.debug("[DEBUG] Found socket in TMPDIR pattern: \(fullPath)", category: "NeovimBridge")
                             }
                             return fullPath
                         }
@@ -673,16 +658,13 @@ actor NeovimBridge {
                 } catch {
                     // Directory doesn't exist or no permission
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] Could not read directory \(pathPrefix): \(error.localizedDescription)", category: "NeovimBridge")
                     }
                 }
             } else {
                 await MainActor.run {
-                    FileLogger.shared.debug("[DEBUG] Checking path: \(pathPattern)", category: "NeovimBridge")
                 }
                 if FileManager.default.fileExists(atPath: pathPattern) {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] Found socket at common location: \(pathPattern)", category: "NeovimBridge")
                     }
                     return pathPattern
                 }
@@ -690,7 +672,6 @@ actor NeovimBridge {
         }
 
         await MainActor.run {
-            FileLogger.shared.warning("[DEBUG] Could not find Neovim listen address for PID \(pid)", category: "NeovimBridge")
         }
 
         return nil
@@ -709,13 +690,11 @@ actor NeovimBridge {
 
         guard let output = result else {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] ps command failed for PID \(pid)", category: "NeovimBridge")
             }
             return nil
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] ps output:\n\(output)", category: "NeovimBridge")
         }
 
         // Look for --listen flag in the command line
@@ -732,7 +711,6 @@ actor NeovimBridge {
                         let address = addressComponents[0].trimmingCharacters(in: .whitespaces)
                         if !address.isEmpty && address.hasPrefix("/") {
                             await MainActor.run {
-                                FileLogger.shared.debug("[DEBUG] Found --listen address from command line: \(address)", category: "NeovimBridge")
                             }
                             return address
                         }
@@ -742,7 +720,6 @@ actor NeovimBridge {
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] NVIM_LISTEN_ADDRESS or --listen not found", category: "NeovimBridge")
         }
 
         return nil
@@ -760,7 +737,6 @@ actor NeovimBridge {
         let output: String?
         if result == nil {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] /usr/sbin/lsof failed, trying /usr/bin/lsof", category: "NeovimBridge")
             }
             output = ProcessExecutor.shared.runSyncOrNil(
                 "/usr/bin/lsof",
@@ -772,13 +748,11 @@ actor NeovimBridge {
 
         guard let lsofOutput = output else {
             await MainActor.run {
-                FileLogger.shared.debug("[DEBUG] lsof command failed for PID \(pid)", category: "NeovimBridge")
             }
             return nil
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] lsof output:\n\(lsofOutput)", category: "NeovimBridge")
         }
 
         // Parse lsof output
@@ -805,7 +779,6 @@ actor NeovimBridge {
                 // Verify it's a valid socket path for Neovim
                 if path.hasPrefix("/") && (path.contains("nvim") || path.hasSuffix(".0")) {
                     await MainActor.run {
-                        FileLogger.shared.debug("[DEBUG] Found potential socket: \(path)", category: "NeovimBridge")
                     }
                     return path
                 }
@@ -813,7 +786,6 @@ actor NeovimBridge {
         }
 
         await MainActor.run {
-            FileLogger.shared.debug("[DEBUG] No socket found in lsof output", category: "NeovimBridge")
         }
 
         return nil
