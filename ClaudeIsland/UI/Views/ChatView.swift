@@ -27,6 +27,8 @@ struct ChatView: View {
     @State private var newMessageCount: Int = 0
     @State private var previousHistoryCount: Int = 0
     @State private var isBottomVisible: Bool = true
+    @State private var showSendError: Bool = false
+    @State private var sendErrorMessage: String = ""
     @FocusState private var isInputFocused: Bool
 
     init(sessionId: String, initialSession: SessionState, sessionMonitor: ClaudeSessionMonitor, viewModel: NotchViewModel) {
@@ -94,6 +96,11 @@ struct ChatView: View {
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isWaitingForApproval)
         .animation(nil, value: viewModel.status)
+        .alert("Message not sent", isPresented: $showSendError) {
+            Button("OK") {}
+        } message: {
+            Text(sendErrorMessage)
+        }
         .task {
             // Skip if already loaded (prevents redundant work on view recreation)
             guard !hasLoadedOnce else { return }
@@ -503,6 +510,7 @@ struct ChatView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
+        let originalText = text
         inputText = ""
 
         // Resume autoscroll when user sends a message
@@ -511,16 +519,23 @@ struct ChatView: View {
 
         // Don't add to history here - it will be synced from JSONL when UserPromptSubmit event fires
         Task {
-            await sendToSession(text)
+            let success = await sendToSession(originalText)
+            guard !success else { return }
+
+            await MainActor.run {
+                inputText = originalText
+                sendErrorMessage = "Couldn’t reach the Claude session (tmux target may have changed after being idle). Please reopen the session or focus the terminal and try again."
+                showSendError = true
+            }
         }
     }
 
-    private func sendToSession(_ text: String) async {
+    private func sendToSession(_ text: String) async -> Bool {
         // Priority 1: Neovim RPC (if available)
         if session.canSendViaNeovim {
             do {
-                let bytes = try await NeovimBridge.shared.sendText(text, for: session)
-                return
+                _ = try await NeovimBridge.shared.sendText(text, for: session)
+                return true
             } catch {
                 // Fall back to tmux
             }
@@ -528,7 +543,7 @@ struct ChatView: View {
 
         // Priority 2: tmux
         guard session.isInTmux else {
-            return
+            return false
         }
 
         let tmuxPaneId = session.tmuxPaneId
@@ -539,32 +554,39 @@ struct ChatView: View {
         // Strategy 2a: Find by paneId
         if let tmuxPaneId, !tmuxPaneId.isEmpty {
             if let target = await TmuxController.shared.findTmuxTarget(forPaneId: tmuxPaneId) {
-                _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
-                return
+                if await ToolApprovalHandler.shared.sendMessage(text, to: target) {
+                    return true
+                }
             }
         }
 
         // Strategy 2b: Find by TTY
         if let tty {
             if let target = await findTmuxTarget(tty: tty) {
-                _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
-                return
+                if await ToolApprovalHandler.shared.sendMessage(text, to: target) {
+                    return true
+                }
             }
         }
 
         // Strategy 2c: Find by PID
         if let pid {
             if let target = await TmuxController.shared.findTmuxTarget(forClaudePid: pid) {
-                _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
-                return
+                if await ToolApprovalHandler.shared.sendMessage(text, to: target) {
+                    return true
+                }
             }
         }
 
         // Strategy 2d: Find by CWD
         if let target = await TmuxController.shared.findTmuxTarget(forWorkingDirectory: cwd) {
-            _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
-            return
+            if await ToolApprovalHandler.shared.sendMessage(text, to: target) {
+                return true
+            }
         }
+
+        Self.logger.error("Failed to send message: no tmux target succeeded for sessionId=\(self.sessionId, privacy: .public)")
+        return false
     }
 
     private func findTmuxTarget(tty: String) async -> TmuxTarget? {
