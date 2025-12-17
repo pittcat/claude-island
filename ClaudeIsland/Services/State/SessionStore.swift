@@ -106,6 +106,14 @@ actor SessionStore {
         case .agentFileUpdated:
             // No longer used - subagent tools are populated from JSONL completion
             break
+
+        // MARK: - Neovim Connection Events
+
+        case .neovimStatusChanged(let sessionId, let status):
+            processNeovimStatusChanged(sessionId: sessionId, status: status)
+
+        case .neovimRediscoveryRequested(let sessionId):
+            await processNeovimRediscovery(sessionId: sessionId)
         }
 
         publishState()
@@ -841,6 +849,56 @@ actor SessionStore {
     private func processSessionEnd(sessionId: String) async {
         sessions.removeValue(forKey: sessionId)
         cancelPendingSync(sessionId: sessionId)
+    }
+
+
+    // MARK: - Neovim Connection Processing
+
+    private func processNeovimStatusChanged(sessionId: String, status: NeovimConnectionStatus) {
+        guard var session = sessions[sessionId] else { return }
+        session.neovimConnectionStatus = status
+        session.lastNeovimCheck = Date()
+        sessions[sessionId] = session
+
+        if status == .disconnected {
+            Self.logger.warning("Neovim disconnected for session \(sessionId.prefix(8))")
+        }
+    }
+
+    private func processNeovimRediscovery(sessionId: String) async {
+        guard var session = sessions[sessionId] else { return }
+
+        // Mark as checking while we attempt rediscovery
+        session.neovimConnectionStatus = .checking
+        sessions[sessionId] = session
+        publishState()
+
+        // Attempt to rediscover the Neovim instance via NeovimBridge
+        // This will check the registry and try to validate the connection
+        do {
+            let success = try await NeovimBridge.shared.checkConnection(
+                listenAddress: session.nvimListenAddress,
+                nvimPid: session.nvimPid
+            )
+
+            // Update status based on result
+            var updatedSession = sessions[sessionId] ?? session
+            updatedSession.neovimConnectionStatus = success ? .connected : .disconnected
+            updatedSession.lastNeovimCheck = Date()
+            sessions[sessionId] = updatedSession
+
+            if success {
+                Self.logger.info("Neovim reconnected for session \(sessionId.prefix(8))")
+            } else {
+                Self.logger.warning("Neovim rediscovery failed for session \(sessionId.prefix(8))")
+            }
+        } catch {
+            Self.logger.error("Neovim rediscovery error for session \(sessionId.prefix(8)): \(error)")
+            var updatedSession = sessions[sessionId] ?? session
+            updatedSession.neovimConnectionStatus = .disconnected
+            updatedSession.lastNeovimCheck = Date()
+            sessions[sessionId] = updatedSession
+        }
     }
 
     // MARK: - History Loading

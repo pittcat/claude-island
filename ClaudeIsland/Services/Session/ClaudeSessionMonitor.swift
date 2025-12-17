@@ -68,10 +68,20 @@ class ClaudeSessionMonitor: ObservableObject {
                 }
             }
         )
+
+        // Start Neovim connection health checker
+        Task {
+            await NeovimHealthChecker.shared.startMonitoring()
+        }
     }
 
     func stopMonitoring() {
         HookSocketServer.shared.stop()
+
+        // Stop Neovim connection health checker
+        Task {
+            await NeovimHealthChecker.shared.stopMonitoring()
+        }
     }
 
     // MARK: - Permission Handling

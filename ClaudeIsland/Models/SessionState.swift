@@ -32,6 +32,10 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var nvimListenAddress: String?
     /// The Neovim PID (if known)
     var nvimPid: Int?
+    /// Real-time Neovim connection status (updated by health check)
+    var neovimConnectionStatus: NeovimConnectionStatus
+    /// Last time the Neovim connection was checked
+    var lastNeovimCheck: Date?
 
     // MARK: - State Machine
 
@@ -90,6 +94,8 @@ struct SessionState: Equatable, Identifiable, Sendable {
         isInNeovim: Bool = false,
         nvimListenAddress: String? = nil,
         nvimPid: Int? = nil,
+        neovimConnectionStatus: NeovimConnectionStatus = .unknown,
+        lastNeovimCheck: Date? = nil,
         phase: SessionPhase = .idle,
         chatItems: [ChatHistoryItem] = [],
         toolTracker: ToolTracker = ToolTracker(),
@@ -113,6 +119,8 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.isInNeovim = isInNeovim
         self.nvimListenAddress = nvimListenAddress
         self.nvimPid = nvimPid
+        self.neovimConnectionStatus = neovimConnectionStatus
+        self.lastNeovimCheck = lastNeovimCheck
         self.phase = phase
         self.chatItems = chatItems
         self.toolTracker = toolTracker

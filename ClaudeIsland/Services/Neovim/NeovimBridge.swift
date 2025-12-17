@@ -202,6 +202,44 @@ actor NeovimBridge {
         }
     }
 
+
+    /// Check connection to a Neovim instance using stored address/PID
+    /// Used for health checking without requiring full SessionState
+    func checkConnection(listenAddress: String?, nvimPid: Int?) async throws -> Bool {
+        // Need at least a listen address to attempt connection
+        guard let address = listenAddress else {
+            // Try to get address from PID if available
+            if let pid = nvimPid, let addr = await getNeovimListenAddress(pid: pid) {
+                return try await checkConnectionDirect(address: addr, pid: pid)
+            }
+            throw NeovimBridgeError.noNeovimInstance
+        }
+
+        return try await checkConnectionDirect(address: address, pid: nvimPid ?? 0)
+    }
+
+    /// Direct connection check with known address
+    private func checkConnectionDirect(address: String, pid: Int) async throws -> Bool {
+        let instance = NeovimInstance(
+            pid: pid,
+            listenAddress: address,
+            cwd: nil,
+            registeredAt: Date(),
+            tmuxSession: nil,
+            tmuxWindow: nil,
+            tmuxPane: nil
+        )
+
+        let traceId = UUID().uuidString
+        let payload: [String: Any] = [
+            "trace_id": traceId,
+            "action": "ping"
+        ]
+
+        let response = try await callRPC(instance: instance, payload: payload, traceId: traceId)
+        return response.ok && (response.data?.pong ?? false)
+    }
+
     /// Get terminal status from Neovim
     func getStatus(for sessionState: SessionState) async throws -> NeovimRPCResponse {
         let instance = try await findNeovimInstance(for: sessionState)

@@ -65,6 +65,14 @@ enum SessionEvent: Sendable {
     /// User issued /clear command - reset UI state while keeping session alive
     case clearDetected(sessionId: String)
 
+    // MARK: - Neovim Connection Events
+
+    /// Neovim connection status changed (from health check)
+    case neovimStatusChanged(sessionId: String, status: NeovimConnectionStatus)
+
+    /// Request Neovim instance rediscovery (triggered when send fails)
+    case neovimRediscoveryRequested(sessionId: String)
+
     // MARK: - Session Lifecycle
 
     /// Session has ended
@@ -215,6 +223,10 @@ extension SessionEvent: CustomStringConvertible {
             return "subagentStopped(session: \(sessionId.prefix(8)), task: \(taskToolId.prefix(12)))"
         case .agentFileUpdated(let sessionId, let taskToolId, let tools):
             return "agentFileUpdated(session: \(sessionId.prefix(8)), task: \(taskToolId.prefix(12)), tools: \(tools.count))"
+        case .neovimStatusChanged(let sessionId, let status):
+            return "neovimStatusChanged(session: \(sessionId.prefix(8)), status: \(status.rawValue))"
+        case .neovimRediscoveryRequested(let sessionId):
+            return "neovimRediscoveryRequested(session: \(sessionId.prefix(8)))"
         }
     }
 }

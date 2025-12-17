@@ -156,6 +156,9 @@ struct InstanceRow: View {
             stateIndicator
                 .frame(width: 14)
 
+            // Neovim connection status (only for Neovim sessions)
+            neovimIndicator
+
             // Text content
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.displayTitle)
@@ -318,6 +321,31 @@ struct InstanceRow: View {
             Circle()
                 .fill(Color.white.opacity(0.2))
                 .frame(width: 6, height: 6)
+        }
+    }
+
+
+    /// Neovim connection status indicator - only shown for Neovim sessions
+    @ViewBuilder
+    private var neovimIndicator: some View {
+        if session.isInNeovim {
+            HStack(spacing: 2) {
+                Image(systemName: "apple.terminal")
+                    .font(.system(size: 9))
+                    .foregroundColor(session.neovimConnectionStatus.displayColor)
+
+                Circle()
+                    .fill(session.neovimConnectionStatus.displayColor)
+                    .frame(width: 5, height: 5)
+                    .opacity(session.neovimConnectionStatus == .checking ? 0.6 : 1.0)
+                    .animation(
+                        session.neovimConnectionStatus == .checking
+                            ? .easeInOut(duration: 0.5).repeatForever(autoreverses: true)
+                            : .default,
+                        value: session.neovimConnectionStatus
+                    )
+            }
+            .help(session.neovimConnectionStatus.tooltipText)
         }
     }
 

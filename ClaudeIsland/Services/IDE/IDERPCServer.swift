@@ -257,7 +257,7 @@ actor IDERPCServer {
 
         case "ping":
             return IDERPCResponse(success: true, message: "pong", data: nil)
-
+                                                        
         default:
             return IDERPCResponse(
                 success: false,

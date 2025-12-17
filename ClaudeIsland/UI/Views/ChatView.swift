@@ -95,6 +95,9 @@ struct ChatView: View {
                         .transition(.opacity)
                 }
             }
+            // Floating Neovim status indicator (top-right)
+            neovimStatusIndicator
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isWaitingForApproval)
         .animation(nil, value: viewModel.status)
@@ -480,6 +483,50 @@ struct ChatView: View {
         )
     }
 
+
+    // MARK: - Neovim Status Indicator
+
+    /// Floating Neovim connection status indicator (top-right corner)
+    @ViewBuilder
+    private var neovimStatusIndicator: some View {
+        if session.isInNeovim {
+            HStack(spacing: 6) {
+                Image(systemName: "apple.terminal")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(session.neovimConnectionStatus.displayColor)
+
+                Circle()
+                    .fill(session.neovimConnectionStatus.displayColor)
+                    .frame(width: 6, height: 6)
+                    .opacity(session.neovimConnectionStatus == .checking ? 0.5 : 1.0)
+                    .animation(
+                        session.neovimConnectionStatus == .checking
+                            ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                            : .default,
+                        value: session.neovimConnectionStatus
+                    )
+
+                Text(session.neovimConnectionStatus.displayText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(session.neovimConnectionStatus.displayColor.opacity(0.9))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(Color.black.opacity(0.6))
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(session.neovimConnectionStatus.displayColor.opacity(0.3), lineWidth: 1)
+                    )
+            )
+            .help(session.neovimConnectionStatus.tooltipText)
+            .padding(.trailing, 8)
+            .padding(.top, 8)
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        }
+    }
+
     // MARK: - Autoscroll Management
 
     /// Pause autoscroll (user scrolled away from bottom)
@@ -574,18 +621,41 @@ struct ChatView: View {
     }
 
     private func sendToSession(_ text: String) async -> Bool {
+        var neovimAttempted = false
+        var neovimError: Error? = nil
+
         // Priority 1: Neovim RPC (if available)
         if session.canSendViaNeovim {
+            neovimAttempted = true
             do {
                 _ = try await NeovimBridge.shared.sendText(text, for: session)
+                // Success - update status to connected (if it was unknown/checking)
+                if session.neovimConnectionStatus != .connected {
+                    await SessionStore.shared.process(.neovimStatusChanged(
+                        sessionId: sessionId,
+                        status: .connected
+                    ))
+                }
                 return true
             } catch {
+                neovimError = error
+                Self.logger.warning("Neovim send failed for session \(sessionId.prefix(8)): \(error.localizedDescription)")
+
+                // Mark as disconnected and request rediscovery
+                await SessionStore.shared.process(.neovimStatusChanged(
+                    sessionId: sessionId,
+                    status: .disconnected
+                ))
                 // Fall back to tmux
             }
         }
 
         // Priority 2: tmux
         guard session.isInTmux else {
+            // Not in tmux - if we tried Neovim and it failed, that's the error
+            if neovimAttempted {
+                Self.logger.error("No fallback available: Neovim failed and session is not in tmux")
+            }
             return false
         }
 
@@ -628,7 +698,12 @@ struct ChatView: View {
             }
         }
 
-        Self.logger.error("Failed to send message: no tmux target succeeded for sessionId=\(self.sessionId, privacy: .public)")
+        // All strategies failed
+        if neovimAttempted, let error = neovimError {
+            Self.logger.error("All send strategies failed. Neovim error: \(error.localizedDescription), tmux fallback also failed for sessionId=\(self.sessionId, privacy: .public)")
+        } else {
+            Self.logger.error("Failed to send message: no tmux target succeeded for sessionId=\(self.sessionId, privacy: .public)")
+        }
         return false
     }
 
