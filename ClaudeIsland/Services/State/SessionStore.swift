@@ -491,6 +491,9 @@ actor SessionStore {
     private func processFileUpdate(_ payload: FileUpdatePayload) async {
         guard var session = sessions[payload.sessionId] else { return }
 
+        // Track if there are new messages before processing
+        let previousChatItemsCount = session.chatItems.count
+
         // Update conversationInfo from JSONL (summary, lastMessage, etc.)
         let conversationInfo = await ConversationParser.shared.parse(
             sessionId: payload.sessionId,
@@ -624,6 +627,13 @@ actor SessionStore {
         )
 
         sessions[payload.sessionId] = session
+
+        // Mark as unread if there are new messages
+        let newChatItemsCount = session.chatItems.count
+        if newChatItemsCount > previousChatItemsCount && !session.hasUnreadMessages {
+            session.hasUnreadMessages = true
+            sessions[payload.sessionId] = session
+        }
 
         await emitToolCompletionEvents(
             sessionId: payload.sessionId,
@@ -900,6 +910,9 @@ actor SessionStore {
         // Sort by timestamp
         session.chatItems.sort { $0.timestamp < $1.timestamp }
 
+        // Don't mark as unread when loading from file - these are old messages
+        // Only mark as unread for real-time updates
+
         sessions[sessionId] = session
     }
 
@@ -969,6 +982,16 @@ actor SessionStore {
             return true
         }
         return false
+    }
+
+    /// Mark a session as read (called when user views the session)
+    func markAsRead(sessionId: String) {
+        guard var session = sessions[sessionId] else { return }
+        if session.hasUnreadMessages {
+            session.hasUnreadMessages = false
+            sessions[sessionId] = session
+            publishState()
+        }
     }
 
     /// Get all current sessions

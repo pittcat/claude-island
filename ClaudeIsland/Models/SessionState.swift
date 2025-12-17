@@ -68,6 +68,11 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var lastActivity: Date
     var createdAt: Date
 
+    // MARK: - Read Status
+
+    /// Whether this session has unread messages
+    var hasUnreadMessages: Bool
+
     // MARK: - Identifiable
 
     var id: String { sessionId }
@@ -95,7 +100,8 @@ struct SessionState: Equatable, Identifiable, Sendable {
         ),
         needsClearReconciliation: Bool = false,
         lastActivity: Date = Date(),
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        hasUnreadMessages: Bool = false
     ) {
         self.sessionId = sessionId
         self.cwd = cwd
@@ -115,6 +121,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.needsClearReconciliation = needsClearReconciliation
         self.lastActivity = lastActivity
         self.createdAt = createdAt
+        self.hasUnreadMessages = hasUnreadMessages
     }
 
     // MARK: - Derived Properties

@@ -22,6 +22,7 @@ struct ChatView: View {
     @State private var session: SessionState
     @State private var isLoading: Bool = true
     @State private var hasLoadedOnce: Bool = false
+    @State private var suppressInitialMessageAnimations: Bool = true
     @State private var shouldScrollToBottom: Bool = false
     @State private var isAutoscrollPaused: Bool = false
     @State private var newMessageCount: Int = 0
@@ -44,6 +45,7 @@ struct ChatView: View {
         self._history = State(initialValue: cachedHistory)
         self._isLoading = State(initialValue: !alreadyLoaded)
         self._hasLoadedOnce = State(initialValue: alreadyLoaded)
+        self._suppressInitialMessageAnimations = State(initialValue: !alreadyLoaded)
     }
 
     /// Whether we're waiting for approval
@@ -108,18 +110,15 @@ struct ChatView: View {
 
             // Check if already loaded (from previous visit)
             if ChatHistoryManager.shared.isLoaded(sessionId: sessionId) {
-                history = ChatHistoryManager.shared.history(for: sessionId)
-                isLoading = false
+                applyHistoryUpdate(ChatHistoryManager.shared.history(for: sessionId))
+                applyLoadingState(false)
                 return
             }
 
             // Load in background, show loading state
             await ChatHistoryManager.shared.loadFromFile(sessionId: sessionId, cwd: session.cwd)
-            history = ChatHistoryManager.shared.history(for: sessionId)
-
-            withAnimation(.easeOut(duration: 0.2)) {
-                isLoading = false
-            }
+            applyHistoryUpdate(ChatHistoryManager.shared.history(for: sessionId))
+            applyLoadingState(false)
         }
         .onReceive(ChatHistoryManager.shared.$histories) { histories in
             // Update when count changes, last item differs, or content changes (e.g., tool status)
@@ -136,7 +135,7 @@ struct ChatView: View {
                         previousHistoryCount = newHistory.count
                     }
 
-                    history = newHistory
+                    applyHistoryUpdate(newHistory)
 
                     // Auto-scroll to bottom only if autoscroll is NOT paused
                     if !isAutoscrollPaused && countChanged {
@@ -145,7 +144,7 @@ struct ChatView: View {
 
                     // If we have data, skip loading state (handles view recreation)
                     if isLoading && !newHistory.isEmpty {
-                        isLoading = false
+                        applyLoadingState(false)
                     }
                 }
             } else if hasLoadedOnce {
@@ -295,7 +294,7 @@ struct ChatView: View {
                         ProcessingIndicatorView(turnId: lastUserMessageId)
                             .padding(.horizontal, 16)
                             .scaleEffect(x: 1, y: -1)
-                            .transition(.asymmetric(
+                            .transition(suppressInitialMessageAnimations ? .identity : .asymmetric(
                                 insertion: .opacity.combined(with: .scale(scale: 0.95)).combined(with: .offset(y: -4)),
                                 removal: .opacity
                             ))
@@ -305,7 +304,7 @@ struct ChatView: View {
                         MessageItemView(item: item, sessionId: sessionId)
                             .padding(.horizontal, 16)
                             .scaleEffect(x: 1, y: -1)
-                            .transition(.asymmetric(
+                            .transition(suppressInitialMessageAnimations ? .identity : .asymmetric(
                                 insertion: .opacity.combined(with: .scale(scale: 0.98)),
                                 removal: .opacity
                             ))
@@ -313,8 +312,8 @@ struct ChatView: View {
                 }
                 .padding(.top, 20)
                 .padding(.bottom, 20)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isProcessing)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: history.count)
+                .animation(suppressInitialMessageAnimations ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: isProcessing)
+                .animation(suppressInitialMessageAnimations ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: history.count)
             }
             .scaleEffect(x: 1, y: -1)
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -332,9 +331,13 @@ struct ChatView: View {
             }
             .onChange(of: shouldScrollToBottom) { _, shouldScroll in
                 if shouldScroll {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        // In inverted scroll, use .bottom anchor to scroll to the visual bottom
+                    if suppressInitialMessageAnimations {
                         proxy.scrollTo("bottom", anchor: .bottom)
+                    } else {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            // In inverted scroll, use .bottom anchor to scroll to the visual bottom
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
                     }
                     shouldScrollToBottom = false
                     resumeAutoscroll()
@@ -484,6 +487,40 @@ struct ChatView: View {
         isAutoscrollPaused = false
         newMessageCount = 0
         previousHistoryCount = history.count
+    }
+
+    // MARK: - Initial Render Suppression
+
+    private func applyHistoryUpdate(_ newHistory: [ChatHistoryItem]) {
+        if suppressInitialMessageAnimations {
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                history = newHistory
+            }
+
+            if !newHistory.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    suppressInitialMessageAnimations = false
+                }
+            }
+        } else {
+            history = newHistory
+        }
+    }
+
+    private func applyLoadingState(_ loading: Bool) {
+        if suppressInitialMessageAnimations {
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                isLoading = loading
+            }
+        } else {
+            withAnimation(.easeOut(duration: 0.2)) {
+                isLoading = loading
+            }
+        }
     }
 
     // MARK: - Actions

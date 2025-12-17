@@ -90,6 +90,9 @@ struct ClaudeInstancesView: View {
     private func focusSession(_ session: SessionState) {
         guard session.isInTmux else { return }
 
+        // Mark as read when user focuses the session
+        sessionMonitor.markAsRead(sessionId: session.sessionId)
+
         Task {
             if let pid = session.pid {
                 _ = await YabaiController.shared.focusWindow(forClaudePid: pid)
@@ -100,6 +103,8 @@ struct ClaudeInstancesView: View {
     }
 
     private func openChat(_ session: SessionState) {
+        // Mark as read when user opens chat
+        sessionMonitor.markAsRead(sessionId: session.sessionId)
         viewModel.showChat(for: session)
     }
 
@@ -230,9 +235,7 @@ struct InstanceRow: View {
             if isWaitingForApproval && isInteractiveTool {
                 // Interactive tools like AskUserQuestion - show chat + terminal buttons
                 HStack(spacing: 8) {
-                    IconButton(icon: "bubble.left") {
-                        onChat()
-                    }
+                    ChatIconButton(icon: "bubble.left", action: onChat, hasUnread: session.hasUnreadMessages)
 
                     // Go to Terminal button (only if yabai available)
                     if isYabaiAvailable {
@@ -253,9 +256,7 @@ struct InstanceRow: View {
             } else {
                 HStack(spacing: 8) {
                     // Chat icon - always show
-                    IconButton(icon: "bubble.left") {
-                        onChat()
-                    }
+                    ChatIconButton(icon: "bubble.left", action: onChat, hasUnread: session.hasUnreadMessages)
 
                     // Focus icon (only for tmux instances with yabai)
                     if session.isInTmux && isYabaiAvailable {
@@ -392,6 +393,7 @@ struct InlineApprovalButtons: View {
 struct IconButton: View {
     let icon: String
     let action: () -> Void
+    let color: Color = .white.opacity(0.4)
 
     @State private var isHovered = false
 
@@ -401,7 +403,7 @@ struct IconButton: View {
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(isHovered ? .white.opacity(0.8) : .white.opacity(0.4))
+                .foregroundColor(buttonColor)
                 .frame(width: 24, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
@@ -410,6 +412,44 @@ struct IconButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+    }
+
+    private var buttonColor: Color {
+        let baseColor = color
+        return isHovered ? baseColor.opacity(0.8) : baseColor
+    }
+}
+
+// MARK: - Chat Icon Button (with unread state)
+
+struct ChatIconButton: View {
+    let icon: String
+    let action: () -> Void
+    let hasUnread: Bool
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(buttonColor)
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isHovered ? Color.white.opacity(0.1) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeInOut(duration: 0.2), value: hasUnread)
+    }
+
+    private var buttonColor: Color {
+        let baseColor = hasUnread ? Color.red : Color.white.opacity(0.4)
+        return isHovered ? baseColor.opacity(0.8) : baseColor
     }
 }
 

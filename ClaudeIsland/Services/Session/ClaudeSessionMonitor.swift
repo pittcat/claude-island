@@ -120,6 +120,13 @@ class ClaudeSessionMonitor: ObservableObject {
         }
     }
 
+    /// Mark a session as read (called when user views the session)
+    func markAsRead(sessionId: String) {
+        Task {
+            await SessionStore.shared.markAsRead(sessionId: sessionId)
+        }
+    }
+
     // MARK: - State Update
 
     private func updateFromSessions(_ sessions: [SessionState]) {
