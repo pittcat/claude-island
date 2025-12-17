@@ -206,20 +206,40 @@ actor NeovimBridge {
     /// Check connection to a Neovim instance using stored address/PID
     /// Used for health checking without requiring full SessionState
     func checkConnection(listenAddress: String?, nvimPid: Int?) async throws -> Bool {
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] checkConnection called - address: \(listenAddress ?? "nil"), pid: \(nvimPid?.description ?? "nil")", category: "NeovimBridge")
+        }
+
         // Need at least a listen address to attempt connection
         guard let address = listenAddress else {
+            await MainActor.run {
+                FileLogger.shared.debug("[DEBUG] No listen address, trying to get from PID", category: "NeovimBridge")
+            }
             // Try to get address from PID if available
             if let pid = nvimPid, let addr = await getNeovimListenAddress(pid: pid) {
+                await MainActor.run {
+                    FileLogger.shared.debug("[DEBUG] Got address from PID: \(addr)", category: "NeovimBridge")
+                }
                 return try await checkConnectionDirect(address: addr, pid: pid)
+            }
+            await MainActor.run {
+                FileLogger.shared.warning("[DEBUG] No listen address available and couldn't get from PID", category: "NeovimBridge")
             }
             throw NeovimBridgeError.noNeovimInstance
         }
 
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] Using provided address: \(address)", category: "NeovimBridge")
+        }
         return try await checkConnectionDirect(address: address, pid: nvimPid ?? 0)
     }
 
     /// Direct connection check with known address
     private func checkConnectionDirect(address: String, pid: Int) async throws -> Bool {
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] checkConnectionDirect - address: \(address), pid: \(pid)", category: "NeovimBridge")
+        }
+
         let instance = NeovimInstance(
             pid: pid,
             listenAddress: address,
@@ -236,8 +256,21 @@ actor NeovimBridge {
             "action": "ping"
         ]
 
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] Calling RPC with traceId: \(traceId)", category: "NeovimBridge")
+        }
+
         let response = try await callRPC(instance: instance, payload: payload, traceId: traceId)
-        return response.ok && (response.data?.pong ?? false)
+
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] RPC response - ok: \(response.ok), error: \(response.error ?? "nil"), pong: \(response.data?.pong?.description ?? "nil")", category: "NeovimBridge")
+        }
+
+        let result = response.ok && (response.data?.pong ?? false)
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] Final connection result: \(result)", category: "NeovimBridge")
+        }
+        return result
     }
 
     /// Get terminal status from Neovim
@@ -581,45 +614,206 @@ actor NeovimBridge {
 
     /// Get Neovim's listen address for a PID
     private func getNeovimListenAddress(pid: Int) async -> String? {
-        // Method 1: Check NVIM env via /proc or lsof
-        // On macOS, we can use lsof to find the socket
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] getNeovimListenAddress called for PID: \(pid)", category: "NeovimBridge")
+        }
 
+        // Method 1: Check NVIM_LISTEN_ADDRESS environment variable (most reliable)
+        if let envAddress = await getNeovimListenAddressFromEnv(pid: pid) {
+            await MainActor.run {
+                FileLogger.shared.debug("[DEBUG] Found address from environment variable: \(envAddress)", category: "NeovimBridge")
+            }
+            return envAddress
+        }
+
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] Environment variable not found, trying lsof", category: "NeovimBridge")
+        }
+
+        // Method 2: Use lsof to find the Unix domain socket
+        if let socketPath = await getNeovimSocketFromLsof(pid: pid) {
+            await MainActor.run {
+                FileLogger.shared.debug("[DEBUG] Found address from lsof: \(socketPath)", category: "NeovimBridge")
+            }
+            return socketPath
+        }
+
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] lsof didn't find socket, checking common locations", category: "NeovimBridge")
+        }
+
+        // Method 3: Check common Neovim socket locations
+        let xdgRuntime = Foundation.ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"] ?? "/tmp"
+        var possiblePaths = [
+            "\(xdgRuntime)/nvim.\(pid).0",
+            "/tmp/nvim.\(pid).0",
+            "/tmp/nvim\(pid)/0"
+        ]
+
+        // Add $TMPDIR/nvim.pittcat/ location (macOS default for Neovim)
+        if let tmpDir = Foundation.ProcessInfo.processInfo.environment["TMPDIR"] {
+            possiblePaths.append("\(tmpDir)nvim.pittcat/*/nvim.\(pid).0")
+        }
+
+        for pathPattern in possiblePaths {
+            if pathPattern.contains("*") {
+                // Handle wildcard patterns
+                let pathPrefix = pathPattern.replacingOccurrences(of: "/*", with: "")
+                do {
+                    let contents = try FileManager.default.contentsOfDirectory(atPath: pathPrefix)
+                    for item in contents {
+                        if item.hasPrefix("nvim.\(pid).") {
+                            let fullPath = "\(pathPrefix)/\(item)"
+                            await MainActor.run {
+                                FileLogger.shared.debug("[DEBUG] Found socket in TMPDIR pattern: \(fullPath)", category: "NeovimBridge")
+                            }
+                            return fullPath
+                        }
+                    }
+                } catch {
+                    // Directory doesn't exist or no permission
+                    await MainActor.run {
+                        FileLogger.shared.debug("[DEBUG] Could not read directory \(pathPrefix): \(error.localizedDescription)", category: "NeovimBridge")
+                    }
+                }
+            } else {
+                await MainActor.run {
+                    FileLogger.shared.debug("[DEBUG] Checking path: \(pathPattern)", category: "NeovimBridge")
+                }
+                if FileManager.default.fileExists(atPath: pathPattern) {
+                    await MainActor.run {
+                        FileLogger.shared.debug("[DEBUG] Found socket at common location: \(pathPattern)", category: "NeovimBridge")
+                    }
+                    return pathPattern
+                }
+            }
+        }
+
+        await MainActor.run {
+            FileLogger.shared.warning("[DEBUG] Could not find Neovim listen address for PID \(pid)", category: "NeovimBridge")
+        }
+
+        return nil
+    }
+
+    /// Get NVIM_LISTEN_ADDRESS from process environment
+    private func getNeovimListenAddressFromEnv(pid: Int) async -> String? {
+        // On macOS, we can't easily get environment variables from other processes
+        // without special tools like par or procps. We'll try a few approaches:
+
+        // Method 1: Try using ps with environment info (may not work on all macOS versions)
         let result = ProcessExecutor.shared.runSyncOrNil(
-            "/usr/bin/lsof",
-            arguments: ["-p", String(pid), "-a", "-U"]
+            "/bin/ps",
+            arguments: ["-ww", "-p", String(pid)]
         )
 
-        if let output = result {
-            // Look for unix socket paths that look like Neovim server sockets
-            // Neovim typically creates sockets like /tmp/nvim.*/0 or in $XDG_RUNTIME_DIR
-            let lines = output.split(separator: "\n")
-            for line in lines {
-                let lineStr = String(line)
-                if lineStr.contains("/nvim") || lineStr.contains("nvim.") {
-                    // Extract the socket path
-                    let parts = lineStr.split(separator: " ")
-                    if let last = parts.last {
-                        let path = String(last)
-                        if path.hasPrefix("/") && (path.contains("nvim") || path.hasSuffix("/0")) {
-                            return path
+        guard let output = result else {
+            await MainActor.run {
+                FileLogger.shared.debug("[DEBUG] ps command failed for PID \(pid)", category: "NeovimBridge")
+            }
+            return nil
+        }
+
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] ps output:\n\(output)", category: "NeovimBridge")
+        }
+
+        // Look for --listen flag in the command line
+        let lines = output.components(separatedBy: "\n")
+        for line in lines {
+            if line.contains("--listen") {
+                // Extract the address after --listen flag
+                let parts = line.components(separatedBy: "--listen")
+                if parts.count > 1 {
+                    let addressPart = parts[1].trimmingCharacters(in: .whitespaces)
+                    // Extract just the address (first whitespace-separated token)
+                    let addressComponents = addressPart.components(separatedBy: .whitespaces)
+                    if !addressComponents.isEmpty {
+                        let address = addressComponents[0].trimmingCharacters(in: .whitespaces)
+                        if !address.isEmpty && address.hasPrefix("/") {
+                            await MainActor.run {
+                                FileLogger.shared.debug("[DEBUG] Found --listen address from command line: \(address)", category: "NeovimBridge")
+                            }
+                            return address
                         }
                     }
                 }
             }
         }
 
-        // Method 2: Check common Neovim socket locations
-        let xdgRuntime = Foundation.ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"] ?? "/tmp"
-        let possiblePaths = [
-            "\(xdgRuntime)/nvim.\(pid).0",
-            "/tmp/nvim.\(pid).0",
-            "/tmp/nvim\(pid)/0"
-        ]
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] NVIM_LISTEN_ADDRESS or --listen not found", category: "NeovimBridge")
+        }
 
-        for path in possiblePaths {
-            if FileManager.default.fileExists(atPath: path) {
-                return path
+        return nil
+    }
+
+    /// Get socket path using lsof
+    private func getNeovimSocketFromLsof(pid: Int) async -> String? {
+        // Try /usr/sbin/lsof first (macOS default location)
+        let result = ProcessExecutor.shared.runSyncOrNil(
+            "/usr/sbin/lsof",
+            arguments: ["-p", String(pid), "-a", "-U", "-n"]
+        )
+
+        // If /usr/sbin/lsof fails, try /usr/bin/lsof (some systems)
+        let output: String?
+        if result == nil {
+            await MainActor.run {
+                FileLogger.shared.debug("[DEBUG] /usr/sbin/lsof failed, trying /usr/bin/lsof", category: "NeovimBridge")
             }
+            output = ProcessExecutor.shared.runSyncOrNil(
+                "/usr/bin/lsof",
+                arguments: ["-p", String(pid), "-a", "-U", "-n"]
+            )
+        } else {
+            output = result
+        }
+
+        guard let lsofOutput = output else {
+            await MainActor.run {
+                FileLogger.shared.debug("[DEBUG] lsof command failed for PID \(pid)", category: "NeovimBridge")
+            }
+            return nil
+        }
+
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] lsof output:\n\(lsofOutput)", category: "NeovimBridge")
+        }
+
+        // Parse lsof output
+        // Format is typically: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+        // The NAME column is the last column and contains the socket path
+        let lines = lsofOutput.split(separator: "\n")
+
+        for line in lines {
+            let lineStr = String(line).trimmingCharacters(in: .whitespaces)
+
+            // Skip empty lines and header
+            if lineStr.isEmpty || lineStr.hasPrefix("COMMAND") {
+                continue
+            }
+
+            // Look for Unix domain sockets
+            // The NAME column is the last field - we need to extract it carefully
+            // because lsof output has variable spacing
+
+            // Find the last space-separated field
+            if let lastSpaceIndex = lineStr.lastIndex(of: " ") {
+                let path = String(lineStr[lastSpaceIndex...].dropFirst()).trimmingCharacters(in: .whitespaces)
+
+                // Verify it's a valid socket path for Neovim
+                if path.hasPrefix("/") && (path.contains("nvim") || path.hasSuffix(".0")) {
+                    await MainActor.run {
+                        FileLogger.shared.debug("[DEBUG] Found potential socket: \(path)", category: "NeovimBridge")
+                    }
+                    return path
+                }
+            }
+        }
+
+        await MainActor.run {
+            FileLogger.shared.debug("[DEBUG] No socket found in lsof output", category: "NeovimBridge")
         }
 
         return nil
@@ -719,7 +913,7 @@ actor NeovimBridge {
             "IsInTmux: \(session.isInTmux)",
             "IsInNeovim: \(session.isInNeovim)",
             "NvimPid: \(session.nvimPid.map(String.init) ?? "nil")",
-            "CanSendViaNeovim: \(session.canSendViaNeovim)",
+            "ListenAddress: \(session.nvimListenAddress ?? "nil")",
             "",
             "=== Searching for Neovim instances ==="
         ]
