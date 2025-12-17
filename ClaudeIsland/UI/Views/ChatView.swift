@@ -160,6 +160,9 @@ struct ChatView: View {
                 session = updated
                 let isNowProcessing = updated.phase == .processing
 
+                // Mark as read when session is updated (user is viewing new messages in chat)
+                sessionMonitor.markAsRead(sessionId: sessionId)
+
                 if wasWaiting && isNowProcessing {
                     // Scroll to bottom after permission accepted (with slight delay)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -177,6 +180,9 @@ struct ChatView: View {
             }
         }
         .onAppear {
+            // Mark session as read when user opens the chat view
+            sessionMonitor.markAsRead(sessionId: sessionId)
+
             // Auto-focus input when chat opens and tmux messaging is available
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if canSendMessages {

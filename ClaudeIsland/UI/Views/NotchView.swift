@@ -228,7 +228,6 @@ struct NotchView: View {
             // Main content only when opened
             if viewModel.status == .opened {
                 contentView
-                    .frame(width: notchSize.width - 24) // Fixed width to prevent reflow
                     .transition(
                         .asymmetric(
                             insertion: .scale(scale: 0.8, anchor: .top)
@@ -347,26 +346,31 @@ struct NotchView: View {
 
     @ViewBuilder
     private var contentView: some View {
-        Group {
-            switch viewModel.contentType {
-            case .instances:
-                ClaudeInstancesView(
-                    sessionMonitor: sessionMonitor,
-                    viewModel: viewModel
-                )
-            case .menu:
-                NotchMenuView(viewModel: viewModel)
-            case .chat(let session):
-                ChatView(
-                    sessionId: session.sessionId,
-                    initialSession: session,
-                    sessionMonitor: sessionMonitor,
-                    viewModel: viewModel
-                )
+        switch viewModel.contentType {
+        case .instances:
+            ClaudeInstancesView(
+                sessionMonitor: sessionMonitor,
+                viewModel: viewModel
+            )
+            .frame(width: notchSize.width - 24)
+        case .menu:
+            NotchMenuView(viewModel: viewModel)
+                .frame(width: notchSize.width - 24)
+        case .chat(let session):
+            ChatView(
+                sessionId: session.sessionId,
+                initialSession: session,
+                sessionMonitor: sessionMonitor,
+                viewModel: viewModel
+            )
+            // Keep the notch expansion animation, but lay out chat at its final width immediately.
+            // During the expansion, the chat content will be clipped by the notch container instead
+            // of reflowing line-wrap each frame (which looks like horizontal text jitter).
+            .frame(width: viewModel.openedSize.width - 24)
+            .transaction { transaction in
+                transaction.animation = nil
             }
         }
-        .frame(width: notchSize.width - 24) // Fixed width to prevent text reflow
-        // Removed .id() - was causing view recreation and performance issues
     }
 
     // MARK: - Event Handlers
