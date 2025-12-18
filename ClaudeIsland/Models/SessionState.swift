@@ -28,6 +28,9 @@ struct SessionState: Equatable, Identifiable, Sendable {
 
     /// Whether the session is running inside Neovim terminal
     var isInNeovim: Bool
+    /// Whether the session process was launched via a shell inside Neovim terminal (e.g. `:terminal` then typing `claude`)
+    /// Used to filter out "internal" Neovim terminal sessions that are not started by the nvim plugin.
+    var isNeovimTerminalShellSession: Bool
     /// The Neovim server listen address (for RPC)
     var nvimListenAddress: String?
     /// The Neovim PID (if known)
@@ -92,6 +95,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         tmuxPaneId: String? = nil,
         isInTmux: Bool = false,
         isInNeovim: Bool = false,
+        isNeovimTerminalShellSession: Bool = false,
         nvimListenAddress: String? = nil,
         nvimPid: Int? = nil,
         neovimConnectionStatus: NeovimConnectionStatus = .unknown,
@@ -117,6 +121,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.tmuxPaneId = tmuxPaneId
         self.isInTmux = isInTmux
         self.isInNeovim = isInNeovim
+        self.isNeovimTerminalShellSession = isNeovimTerminalShellSession
         self.nvimListenAddress = nvimListenAddress
         self.nvimPid = nvimPid
         self.neovimConnectionStatus = neovimConnectionStatus

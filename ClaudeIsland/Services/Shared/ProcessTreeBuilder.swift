@@ -79,8 +79,7 @@ struct ProcessTreeBuilder: Sendable {
 
         while current > 1 && depth < 20 {
             guard let info = tree[current] else { break }
-            let cmdLower = info.command.lowercased()
-            if cmdLower.contains("nvim") || cmdLower.hasSuffix("/nvim") {
+            if isNeovimProcessName(info.command) {
                 return current
             }
             current = info.ppid
@@ -93,6 +92,37 @@ struct ProcessTreeBuilder: Sendable {
     /// Check if a process is running inside Neovim terminal
     nonisolated func isInNeovim(pid: Int, tree: [Int: ProcessInfo]) -> Bool {
         return findNeovimParent(pid: pid, tree: tree) != nil
+    }
+
+    /// Returns true when the session process appears to be started from a shell inside a Neovim terminal buffer
+    /// (e.g. `:terminal` then typing `claude`), versus being spawned directly by Neovim (common for plugins).
+    nonisolated func isNeovimTerminalShellSession(pid: Int, tree: [Int: ProcessInfo]) -> Bool {
+        guard isInNeovim(pid: pid, tree: tree) else { return false }
+        guard let parentPid = tree[pid]?.ppid, let parent = tree[parentPid] else { return false }
+        return isShellProcessName(parent.command)
+    }
+
+    private nonisolated func isNeovimProcessName(_ command: String) -> Bool {
+        let lower = command.lowercased()
+        let base = URL(fileURLWithPath: lower).lastPathComponent
+
+        if base.contains("nvim") { return true }
+        if base == "lvim" { return true }
+        if base == "neovide" { return true }
+
+        return false
+    }
+
+    private nonisolated func isShellProcessName(_ command: String) -> Bool {
+        let lower = command.lowercased()
+        let base = URL(fileURLWithPath: lower).lastPathComponent
+
+        switch base {
+        case "zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh", "csh":
+            return true
+        default:
+            return false
+        }
     }
 
     /// Walk up the process tree to find the terminal app PID

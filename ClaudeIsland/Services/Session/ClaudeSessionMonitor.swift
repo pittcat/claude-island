@@ -140,8 +140,13 @@ class ClaudeSessionMonitor: ObservableObject {
     // MARK: - State Update
 
     private func updateFromSessions(_ sessions: [SessionState]) {
-        instances = sessions
-        pendingInstances = sessions.filter { $0.needsAttention }
+        let visibleSessions = sessions.filter { session in
+            // Hide sessions started by running `claude` inside a Neovim terminal shell (internal sessions).
+            !(session.isInNeovim && session.isNeovimTerminalShellSession)
+        }
+
+        instances = visibleSessions
+        pendingInstances = visibleSessions.filter { $0.needsAttention }
     }
 
     // MARK: - History Loading (for UI)

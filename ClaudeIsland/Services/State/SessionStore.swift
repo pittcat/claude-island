@@ -131,11 +131,14 @@ actor SessionStore {
             Mixpanel.mainInstance().track(event: "Session Started")
         }
 
+        let previousPid = session.pid
+        let previousNvimPid = session.nvimPid
         session.pid = event.pid
         if let pid = event.pid {
             let tree = ProcessTreeBuilder.shared.buildTree()
 
             session.isInTmux = ProcessTreeBuilder.shared.isInTmux(pid: pid, tree: tree)
+            session.isNeovimTerminalShellSession = ProcessTreeBuilder.shared.isNeovimTerminalShellSession(pid: pid, tree: tree)
 
             // Check if running in Neovim
             if let nvimPid = ProcessTreeBuilder.shared.findNeovimParent(pid: pid, tree: tree) {
