@@ -166,6 +166,7 @@ struct InstanceRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(1)
+                    .truncationMode(.tail)
 
                 // Show tool call when waiting for approval, otherwise last activity
                 if isWaitingForApproval, let toolName = session.pendingToolName {
@@ -232,6 +233,7 @@ struct InstanceRow: View {
                         .lineLimit(1)
                 }
             }
+            .frame(maxWidth: 220)
 
             Spacer(minLength: 0)
 
