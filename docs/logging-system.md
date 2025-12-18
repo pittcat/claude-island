@@ -2,9 +2,54 @@
 
 ## 概述
 
-Claude Island 应用采用多层次的日志系统，记录从 Neovim RPC 通信到 Swift 端会话管理的所有关键操作。本文档详细说明了日志系统的架构、实现和使用方法。
+Claude Island 应用采用**多层次日志系统架构**，记录从 Neovim RPC 通信到 Swift 端会话管理的所有关键操作。系统包含三层日志：
+
+1. **Lua 端日志** - Neovim 插件文件日志 (`~/.claude-island-rpc.log`)
+2. **Swift 端 os.log** - 应用层主力系统日志 (macOS Unified Logging System)
+3. **Swift 端 DebugFileLogger** - 调试专用文件日志 (调试时启用)
+
+**📌 重要说明**:
+- **os.log** 是项目的主力日志系统，在 19 个核心文件中使用
+- **DebugFileLogger** 是调试时临时启用的专用日志系统，平时不启用
+
+本文档详细说明了日志系统的架构、实现和使用方法。
 
 ## 日志系统架构
+
+### 整体架构图
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   Claude Island 日志系统                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  ┌──────────────┐         ┌──────────────┐                  │
+│  │ Lua 端日志    │         │ Swift 端日志  │                  │
+│  │ (Neovim 插件) │         │ (应用层)     │                  │
+│  └──────────────┘         └──────────────┘                  │
+│         │                        │                          │
+│         ▼                        ▼                          │
+│  ~/.claude-island-rpc.log    ┌──────────┐                   │
+│                              │ os.log   │ ← 主力系统          │
+│                              │(19个文件) │                   │
+│                              └──────────┘                   │
+│                              ┌──────────┐                   │
+│                              │DebugFile │ ← 调试时启用        │
+│                              │Logger    │                   │
+│                              └──────────┘                   │
+│                                                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**📊 实际使用情况**:
+- **Lua 端**: 记录 Neovim RPC 通信过程
+- **os.log**: Swift 端主力日志系统，在 19 个核心文件中使用
+- **DebugFileLogger**: 调试时临时启用的专用日志系统
+
+**日志系统职责分工**:
+- **Lua 端**: 专注 Neovim RPC 通信细节
+- **os.log**: 统一记录所有 Swift 端应用逻辑 (NeovimBridge、SessionStore、ChatView 等)
+- **DebugFileLogger**: 调试时深入分析问题根因
 
 ### 1. Lua 端日志 (Neovim 插件)
 
@@ -56,9 +101,11 @@ tail -f ~/.claude-island-rpc.log
 
 ### 2. Swift 端日志 (应用层)
 
-#### 2.1 当前实现: os.log
+**实现**: 双系统架构
+- **主力系统**: `os.log` (macOS Unified Logging System) - **19个文件使用**
+- **调试系统**: `DebugFileLogger` - **调试时临时启用**
 
-**系统**: macOS Unified Logging System
+**使用范围**: os.log 覆盖所有核心文件，包括 NeovimBridge、SessionStore、ChatView 等所有主要服务模块
 
 **实现方式**: 使用 `os.log.OSLog` 和 `Logger`
 
@@ -70,7 +117,7 @@ private static let logger = Logger(subsystem: "com.claudeisland", category: "Neo
 Self.logger.info("sendText with targetBufnr: \(targetBufnr ?? -1) for session \(sessionState.sessionId.prefix(8))")
 ```
 
-**日志路径**: 系统日志 (需要通过 `log stream` 查看)
+**日志路径**: 系统日志 (通过 `log stream` 查看)
 
 **日志级别**:
 - `debug`: 调试信息
@@ -81,7 +128,8 @@ Self.logger.info("sendText with targetBufnr: \(targetBufnr ?? -1) for session \(
 **使用场景**:
 - NeovimBridge 方法调用
 - SessionStore 状态变更
-- 错误和异常处理
+- ChatView 界面交互
+- 各类服务 (Hooks、Tmux、Screenshot、IDE RPC 等) 的操作记录
 
 **查看命令**:
 ```bash
@@ -117,44 +165,55 @@ log show --predicate 'subsystem == "com.claudeisland"' --last 5m --info
 
 ---
 
-#### 2.3 当前实现: DebugFileLogger（开发调试文件日志）
+#### 2.2 调试专用日志: DebugFileLogger（调试时启用）
 
-为便于快速定位 “会话识别/过滤/动画触发” 等问题，现已重新引入一个**开发调试专用**的文件日志系统：`DebugFileLogger`。
+**🔧 调试工具**: `DebugFileLogger` 是**调试时临时启用的专用日志系统**
 
-**日志文件名（固定）**: `debug_log.txt`  
-**默认存储位置**: 仓库根目录（例如 `.../claude-island/debug_log.txt`）  
-**覆盖策略**: App 每次启动时删除旧文件，生成全新日志  
-**编码**: UTF-8  
-**时间戳**: `[YYYY-MM-DD HH:MM:SS.mmm]` 毫秒级  
+**文件位置**: `ClaudeIsland/Utilities/DebugFileLogger.swift` (198行)
 
-**实现位置**:
-- `ClaudeIsland/Utilities/DebugFileLogger.swift`
-- 启动写入：`ClaudeIsland/App/AppDelegate.swift`（在单例检查前写入，保证“启动即落盘”）
+**使用场景**:
+- 快速定位 "会话识别/过滤/动画触发" 等问题
+- 需要详细调试信息时临时启用
+- 开发阶段深入分析问题根因
 
-**路径解析优先级**（保证 GUI App 启动时也能写入）：
-1. 环境变量 `CLAUDE_ISLAND_DEBUG_LOG_DIR`（推荐：在 Xcode Scheme 里配置为项目根目录）
-2. 自动推导仓库根目录（通过 `#filePath` 反推，并校验存在 `ClaudeIsland.xcodeproj`）
-3. 当前工作目录（若可写）
-4. 兜底：`~/Library/Logs/ClaudeIsland/`（始终可写）
+**启用方式**:
+1. 在 `AppDelegate.applicationDidFinishLaunching()` 中调用 `DebugFileLogger.shared.startNewLog()`
+2. 在需要记录调试信息的地方调用 `DebugFileLogger.shared.info/debug/warn/error()`
 
-**日志内容覆盖范围（示例）**：
-- App 启动/退出（`[START]` / `[END]`）
-- HookSocketServer 收到的 hook 事件（sessionId/event/status/pid/tty/tmuxPaneId/tool/toolUseId）
-- SessionStore 处理流程（进程树、Neovim 识别、nvimPid、listenAddress 解析耗时）
-- sessions 发布给 UI 的可见列表摘要（用于排查“过滤后仍触发 UI 动效”）
+**特性**:
+- 日志文件名: `debug_log.txt`
+- 默认存储位置: 仓库根目录
+- 覆盖策略: App 每次启动时删除旧文件，生成全新日志
+- 编码: UTF-8
+- 时间戳: `[YYYY-MM-DD HH:MM:SS.mmm]` 毫秒级
+- 敏感信息自动脱敏
+- 超长内容自动截断
 
-**敏感信息处理**：
-- 环境变量日志会按 key 进行脱敏（包含 `TOKEN/KEY/SECRET/PASSWORD/AUTH/AUTHORIZATION` 的键会输出 `[REDACTED]`）
-- 超长内容会截断（当前实现保留前 2000 字符预览）
+**调试时使用方式**:
 
-**查看方式**：
+```swift
+// 记录启动信息
+DebugFileLogger.shared.info("App启动", "version=1.0, build=123")
+
+// 记录关键决策点
+DebugFileLogger.shared.debug("会话过滤", "total=\(sessions.count), filtered=\(filtered.count)")
+
+// 记录错误和警告
+DebugFileLogger.shared.error("Hook处理失败", "event=\(event), error=\(error.localizedDescription)")
+```
+
+**查看调试日志**:
 ```bash
 tail -f debug_log.txt
 ```
 
+**⚠️ 注意**: 此功能仅在需要深入调试时启用，正常运行时不使用。
+
 ---
 
-## 当前日志实现详情
+## Swift 端日志实现详情
+
+### os.log 使用详情
 
 ### Lua 端日志使用
 
@@ -352,7 +411,7 @@ func processSession(_ session: SessionState) {
 }
 ```
 
-#### 4. 日志最佳实践
+#### 3. 日志最佳实践
 
 **日志类别 (category)**:
 - `NeovimBridge`: Neovim 通信相关
@@ -394,8 +453,11 @@ log stream --predicate 'subsystem == "com.claudeisland"' --level error
 # 开终端1: 监控 Lua 端日志
 tail -f ~/.claude-island-rpc.log
 
-# 开终端2: 监控 Swift 端日志
+# 开终端2: 监控 Swift 端 os.log 日志
 log stream --predicate 'subsystem == "com.claudeisland"' --info
+
+# 开终端3: 监控 Swift 端 DebugFileLogger 日志（调试时启用）
+tail -f debug_log.txt
 ```
 
 #### 过滤特定日志
@@ -502,15 +564,49 @@ log stream --predicate 'subsystem == "com.claudeisland" AND category == "Filter"
 
 **诊断步骤**:
 ```bash
-# 1. 启用 debug 日志查看过滤过程
+# 1. 查看 DebugFileLogger 中的详细过滤过程（推荐）
+tail -f debug_log.txt | grep -i "过滤\|filter"
+
+# 2. 启用 debug 日志查看过滤过程
 log stream --predicate 'subsystem == "com.claudeisland" AND category == "Filter"' --level debug --info
 
-# 2. 查看会话状态检测日志
+# 3. 查看会话状态检测日志
 log stream --predicate 'subsystem == "com.claudeisland" AND category == "Session"' --info
 
-# 3. 检查会话的 isInNeovim 和 nvimListenAddress 值
+# 4. 检查会话的 isInNeovim 和 nvimListenAddress 值
 # 在代码中添加临时日志:
 Self.logger.info("Session \(sessionId): isInNeovim=\(session.isInNeovim), nvimListenAddress=\(session.nvimListenAddress ?? "nil")")
+```
+
+### 问题 5: DebugFileLogger 日志不更新（调试时）
+
+**症状**: 启用 DebugFileLogger 后，`debug_log.txt` 文件没有新内容或文件不存在
+
+**可能原因**:
+1. App 未正确启动 DebugFileLogger
+2. 日志文件路径权限问题
+3. 环境变量 `CLAUDE_ISLAND_DEBUG_LOG_DIR` 配置错误
+
+**解决方案**:
+```bash
+# 1. 检查 AppDelegate 中是否调用了 startNewLog()
+# 应该在前应用启动时调用:
+# DebugFileLogger.shared.startNewLog()
+
+# 2. 检查日志文件路径和权限
+ls -la debug_log.txt
+# 或者查看完整路径:
+tail -f $(find . -name "debug_log.txt" 2>/dev/null)
+
+# 3. 检查环境变量配置
+echo $CLAUDE_ISLAND_DEBUG_LOG_DIR
+
+# 4. 手动测试日志写入
+# 在 Xcode 控制台中执行:
+DebugFileLogger.shared.info("测试", "这是一条测试日志")
+
+# 5. 检查是否在 Xcode Scheme 中配置了环境变量
+# 推荐配置: CLAUDE_ISLAND_DEBUG_LOG_DIR = $(PROJECT_DIR)
 ```
 
 ---
@@ -559,12 +655,29 @@ Lua 端使用文件追加 (阻塞)，Swift 端使用系统日志 (异步)。
 
 ## 最佳实践总结
 
+### 双系统使用原则
+
+**os.log** (主力系统):
+- ✅ 记录所有关键业务操作
+- ✅ 记录错误和异常情况
+- ✅ 记录用户交互和状态变更
+- ✅ 支持长期存储和系统查询
+- ✅ 在所有 19 个核心文件中使用
+
+**DebugFileLogger** (调试专用):
+- ✅ 调试时记录详细调试信息
+- ✅ 快速定位复杂问题根因
+- ✅ 记录过滤逻辑和决策过程
+- ⚠️ 仅在需要深入调试时启用
+
 ### Do's ✅
 - 使用有意义的日志消息
 - 包含 trace_id 便于追踪
 - 使用适当的日志级别
 - 记录关键决策和状态变更
 - 在错误时记录详细信息
+- **平时使用 os.log 记录所有日志** (核心原则)
+- **调试时启用 DebugFileLogger 获取详细信息** (调试原则)
 - **在过滤逻辑中添加清晰的注释** (新增)
 - **使用表情符号作为视觉标识** (新增)
 - **记录批量操作的统计信息** (新增)
@@ -573,19 +686,20 @@ Lua 端使用文件追加 (阻塞)，Swift 端使用系统日志 (异步)。
 - 不要记录敏感信息
 - 不要在高频循环中记录
 - 不要使用日志记录用户输入 (安全风险)
-- 不要忘记清理调试日志
-- 不要混合使用多种日志系统
+- **不要在正常运行时启用 DebugFileLogger** (新增)
 - **不要在过滤逻辑中记录过多 debug 信息** (新增)
 - **不要使用模糊的注释** (新增)
 
 ### 调试工作流
-1. **识别问题**: 查看错误日志
-2. **重现问题**: 启用 debug 日志
-3. **追踪问题**: 使用 trace_id
-4. **分析日志**: 查看关键操作
-5. **修复问题**: 根据日志定位代码
-6. **验证修复**: 确认日志显示正常
-7. **记录修复**: 在代码中添加适当的日志和注释 (新增)
+1. **识别问题**: 查看错误日志 (os.log)
+2. **重现问题**: 启用 debug 日志 (os.log)
+3. **深入调试**: 启用 DebugFileLogger 获取详细信息
+4. **追踪问题**: 使用 trace_id 和 DebugFileLogger
+5. **分析日志**: 查看关键操作 (os.log + DebugFileLogger)
+6. **修复问题**: 根据日志定位代码
+7. **验证修复**: 确认日志显示正常
+8. **关闭调试**: 禁用 DebugFileLogger，恢复正常模式
+9. **记录修复**: 在代码中添加适当的日志和注释 (新增)
 
 ---
 
@@ -598,6 +712,9 @@ Lua 端使用文件追加 (阻塞)，Swift 端使用系统日志 (异步)。
 
 ---
 
-**文档版本**: v1.0
+**文档版本**: v2.0
 **最后更新**: 2025-12-18
 **维护者**: Claude Island 开发团队
+
+**更新日志**:
+- v2.0: 修正 DebugFileLogger 文档，明确其为调试时启用的专用日志系统
