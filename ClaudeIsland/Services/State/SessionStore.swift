@@ -114,6 +114,14 @@ actor SessionStore {
 
         case .neovimRediscoveryRequested(let sessionId):
             await processNeovimRediscovery(sessionId: sessionId)
+
+        case .staleCleanupCandidateEvaluated(let sessionId, let isCandidate, let evaluatedAt, let thresholdSeconds):
+            await processStaleCleanupCandidate(
+                sessionId: sessionId,
+                isCandidate: isCandidate,
+                evaluatedAt: evaluatedAt,
+                thresholdSeconds: thresholdSeconds
+            )
         }
 
         publishState()
@@ -901,6 +909,45 @@ actor SessionStore {
             updatedSession.neovimConnectionStatus = .disconnected
             updatedSession.lastNeovimCheck = Date()
             sessions[sessionId] = updatedSession
+        }
+    }
+
+    // MARK: - Stale Cleanup Processing
+
+    private func processStaleCleanupCandidate(
+        sessionId: String,
+        isCandidate: Bool,
+        evaluatedAt: Date,
+        thresholdSeconds: TimeInterval
+    ) async {
+        guard thresholdSeconds > 0 else {
+            if var session = sessions[sessionId], session.disconnectedAndPidMissingSince != nil {
+                session.disconnectedAndPidMissingSince = nil
+                sessions[sessionId] = session
+            }
+            return
+        }
+
+        guard var session = sessions[sessionId] else { return }
+
+        if isCandidate {
+            if session.disconnectedAndPidMissingSince == nil {
+                session.disconnectedAndPidMissingSince = evaluatedAt
+                sessions[sessionId] = session
+                return
+            }
+
+            if let since = session.disconnectedAndPidMissingSince,
+               evaluatedAt.timeIntervalSince(since) >= thresholdSeconds {
+                Self.logger.info("Pruning stale session \(sessionId.prefix(8)) after \(Int(thresholdSeconds))s (Neovim disconnected + PID missing)")
+                sessions.removeValue(forKey: sessionId)
+                cancelPendingSync(sessionId: sessionId)
+            }
+        } else {
+            if session.disconnectedAndPidMissingSince != nil {
+                session.disconnectedAndPidMissingSince = nil
+                sessions[sessionId] = session
+            }
         }
     }
 

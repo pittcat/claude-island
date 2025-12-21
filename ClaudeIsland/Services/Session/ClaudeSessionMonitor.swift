@@ -73,6 +73,11 @@ class ClaudeSessionMonitor: ObservableObject {
         Task {
             await NeovimHealthChecker.shared.startMonitoring()
         }
+
+        // Start stale session pruner
+        Task {
+            await SessionStalePruner.shared.startMonitoring()
+        }
     }
 
     func stopMonitoring() {
@@ -81,6 +86,11 @@ class ClaudeSessionMonitor: ObservableObject {
         // Stop Neovim connection health checker
         Task {
             await NeovimHealthChecker.shared.stopMonitoring()
+        }
+
+        // Stop stale session pruner
+        Task {
+            await SessionStalePruner.shared.stopMonitoring()
         }
     }
 

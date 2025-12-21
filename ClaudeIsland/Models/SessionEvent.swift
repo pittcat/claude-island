@@ -73,6 +73,11 @@ enum SessionEvent: Sendable {
     /// Request Neovim instance rediscovery (triggered when send fails)
     case neovimRediscoveryRequested(sessionId: String)
 
+    // MARK: - Stale Session Cleanup
+
+    /// Update whether a session is eligible for stale cleanup and delete if threshold is exceeded.
+    case staleCleanupCandidateEvaluated(sessionId: String, isCandidate: Bool, evaluatedAt: Date, thresholdSeconds: TimeInterval)
+
     // MARK: - Session Lifecycle
 
     /// Session has ended
@@ -227,6 +232,8 @@ extension SessionEvent: CustomStringConvertible {
             return "neovimStatusChanged(session: \(sessionId.prefix(8)), status: \(status.rawValue))"
         case .neovimRediscoveryRequested(let sessionId):
             return "neovimRediscoveryRequested(session: \(sessionId.prefix(8)))"
+        case .staleCleanupCandidateEvaluated(let sessionId, let isCandidate, _, let thresholdSeconds):
+            return "staleCleanupCandidateEvaluated(session: \(sessionId.prefix(8)), candidate: \(isCandidate), threshold: \(Int(thresholdSeconds))s)"
         }
     }
 }

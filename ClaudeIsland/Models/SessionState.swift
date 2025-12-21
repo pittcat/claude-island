@@ -39,6 +39,9 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var neovimConnectionStatus: NeovimConnectionStatus
     /// Last time the Neovim connection was checked
     var lastNeovimCheck: Date?
+    /// When Neovim is disconnected and the session PID is missing, stores when this condition started.
+    /// Used to avoid deleting sessions on transient disconnects.
+    var disconnectedAndPidMissingSince: Date?
 
     // MARK: - State Machine
 
@@ -100,6 +103,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         nvimPid: Int? = nil,
         neovimConnectionStatus: NeovimConnectionStatus = .unknown,
         lastNeovimCheck: Date? = nil,
+        disconnectedAndPidMissingSince: Date? = nil,
         phase: SessionPhase = .idle,
         chatItems: [ChatHistoryItem] = [],
         toolTracker: ToolTracker = ToolTracker(),
@@ -126,6 +130,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.nvimPid = nvimPid
         self.neovimConnectionStatus = neovimConnectionStatus
         self.lastNeovimCheck = lastNeovimCheck
+        self.disconnectedAndPidMissingSince = disconnectedAndPidMissingSince
         self.phase = phase
         self.chatItems = chatItems
         self.toolTracker = toolTracker

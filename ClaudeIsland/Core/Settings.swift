@@ -44,6 +44,7 @@ enum AppSettings {
 
     private enum Keys {
         static let notificationSound = "notificationSound"
+        static let staleSessionCleanupMinutes = "staleSessionCleanupMinutes"
     }
 
     // MARK: - Notification Sound
@@ -59,6 +60,23 @@ enum AppSettings {
         }
         set {
             defaults.set(newValue.rawValue, forKey: Keys.notificationSound)
+        }
+    }
+
+    // MARK: - Stale Session Cleanup
+
+    /// Delete sessions from the list after they have been disconnected long enough to be considered stale.
+    /// Value is in minutes. Default is 10.
+    /// Use `0` to disable automatic cleanup.
+    static var staleSessionCleanupMinutes: Int {
+        get {
+            guard defaults.object(forKey: Keys.staleSessionCleanupMinutes) != nil else {
+                return 10
+            }
+            return max(0, defaults.integer(forKey: Keys.staleSessionCleanupMinutes))
+        }
+        set {
+            defaults.set(max(0, newValue), forKey: Keys.staleSessionCleanupMinutes)
         }
     }
 }
