@@ -42,6 +42,6 @@ releases/
 
 # Xcode backup
 *.xcodeproj.backup/
-CLAUDE.md
+# CLAUDE.md
 debug_log.txt
 log/
