@@ -151,6 +151,11 @@ struct InstanceRow: View {
         return toolName == "AskUserQuestion"
     }
 
+    /// Whether the session can be archived (only idle or waitingForInput)
+    private var canArchive: Bool {
+        session.phase == .idle || session.phase == .waitingForInput
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             // State indicator on left
@@ -271,12 +276,8 @@ struct InstanceRow: View {
                         }
                     }
 
-                    // Archive button - only for idle or completed sessions
-                    if session.phase == .idle || session.phase == .waitingForInput {
-                        IconButton(icon: "archivebox") {
-                            onArchive()
-                        }
-                    }
+                    // Archive button - always show, disabled when running
+                    IconButton(icon: "archivebox", action: onArchive, isEnabled: canArchive)
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -424,13 +425,23 @@ struct InlineApprovalButtons: View {
 struct IconButton: View {
     let icon: String
     let action: () -> Void
-    let color: Color = .white.opacity(0.4)
+    let color: Color
+    let isEnabled: Bool
 
     @State private var isHovered = false
 
+    init(icon: String, action: @escaping () -> Void, color: Color = .white.opacity(0.4), isEnabled: Bool = true) {
+        self.icon = icon
+        self.action = action
+        self.color = color
+        self.isEnabled = isEnabled
+    }
+
     var body: some View {
         Button {
-            action()
+            if isEnabled {
+                action()
+            }
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
@@ -438,7 +449,7 @@ struct IconButton: View {
                 .frame(width: 24, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(isHovered ? Color.white.opacity(0.1) : Color.clear)
+                        .fill(isHovered && isEnabled ? Color.white.opacity(0.1) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -447,6 +458,9 @@ struct IconButton: View {
 
     private var buttonColor: Color {
         let baseColor = color
+        if !isEnabled {
+            return baseColor.opacity(0.3)
+        }
         return isHovered ? baseColor.opacity(0.8) : baseColor
     }
 }
