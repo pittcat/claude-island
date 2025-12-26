@@ -213,6 +213,7 @@ struct ChatView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white.opacity(isHeaderHovered ? 1.0 : 0.85))
                     .lineLimit(1)
+                    .truncationMode(.tail)
 
                 Spacer()
             }
